@@ -27,8 +27,11 @@ to stimulate it.
 ## This is a fork
 
 The original is **[DesktopFly](https://github.com/DenisSergeevitch/desktop-fly)**
-by **Denis Shiryaev** — his idea, his connectome circuit, his simulation tuning,
-his behaviour model, his fly. It runs on macOS only, because every input and
+by **Denis Shiryaev**: his idea, his choice of which real neurons to simulate,
+his simulation tuning, his behaviour model, his fly. The connectome itself is
+not his and not this fork's — it is the FlyWire consortium's, and
+[the section below](#where-the-neurons-come-from) traces where every number in
+`data/` was actually measured. DesktopFly runs on macOS only, because every input and
 output path in it is an Apple framework: SceneKit for the rendering,
 `CGWindowListCopyWindowInfo` for the window terrain, `CGEventSource` for user
 idleness, `ProcessInfo.thermalState` for the temperature, `NSStatusItem` for the
@@ -84,6 +87,58 @@ fly here runs on exactly the same real neurons. See
 The body itself is procedural (FlyWire is a brain connectome — no body geometry
 exists), with a tripod gait, visible wing-beat, altitude-scaled flight, grooming
 and sleep postures.
+
+## Where the neurons come from
+
+Neither this fork nor upstream digitised a single neuron. Everything in `data/`
+is downstream of more than a decade of work by other people, and the chain is
+worth stating in full:
+
+1. **The brain was imaged.** *Zheng, Lauritzen, Perlman et al.* cut a
+   seven-day-old adult female *Drosophila melanogaster* brain into ~7,000
+   40 nm sections and imaged them by serial-section transmission electron
+   microscopy at Janelia Research Campus, in Davi Bock's lab. That volume —
+   about 21 million images — is **FAFB**, the Full Adult Fly Brain, and it is
+   the physical measurement everything else rests on.
+   *Cell* 174, 730–743 (2018).
+
+2. **The neurons were segmented and proofread.** **FlyWire**, built by
+   *Sebastian Seung's* and *Mala Murthy's* labs at Princeton, turned that image
+   volume into individual reconstructed neurons: automated segmentation, then
+   proofreading by hundreds of scientists and citizen scientists over years.
+   *Dorkenwald et al., Nature Methods* 19, 119–128 (2022).
+
+3. **The synapses were detected.** *Buhmann et al.* trained a network to find
+   pre- and post-synaptic partners directly in the EM images, which is where the
+   synapse counts on every edge in `data/circuit.json` come from.
+   *Nature Methods* 18, 771–774 (2021).
+
+4. **The neurotransmitters were predicted.** *Eckstein et al.* predicted the
+   transmitter at each synapse from the electron micrographs. This is the
+   `nt_type` field, and it is what makes every weight in this simulation
+   **signed** — acetylcholine excitatory, GABA and glutamate inhibitory. Without
+   it the escape circuit would have no inhibition to race, and the fly would
+   flee everything.
+   *Cell* 187, 2574–2594 (2024).
+
+5. **The wiring diagram was released and annotated.** The FlyWire consortium
+   published the finished connectome — 139,255 proofread neurons and tens of
+   millions of synapses — together with the whole-brain cell-type annotations
+   that let `etl.py` ask for "LC4" or "DNp01" by name.
+   *Dorkenwald et al., Nature* 634, 124–138 (2024) and
+   *Schlegel et al., Nature* 634, 139–152 (2024).
+
+6. **It was made downloadable.** [FlyWire Codex](https://codex.flywire.ai)
+   publishes the v783 release as the four CSV dumps `etl.py` reads.
+
+What upstream added on top — and what this fork inherits — is the *selection*:
+which 668 of those 139,255 neurons to simulate, and which cell type should drive
+which behaviour. That mapping follows the published functional literature, for
+example the giant fiber's looming-driven escape (*von Reyn et al.*, *Ache et
+al.*), DNp09 initiating forward walking (*Bidaye et al., Neuron* 2020), MDN
+driving backward walking (*Bidaye et al., Science* 2014), and DNa01/DNa02
+steering (*Rayshubskiy et al.*). The LIF dynamics on top of that graph are a
+model, not a measurement — see [What's modelled vs. measured](#whats-modelled-vs-measured).
 
 ## Installation
 
@@ -265,7 +320,7 @@ FlyWire data.
 | what | where | licence |
 |---|---|---|
 | **DesktopFly** by Denis Shiryaev — the original project. `etl.py` and `assets/` are vendored byte-identical; `Sim.swift`, `main.swift`, `FlyModel.swift`, `BrainView.swift` and `Environment.swift` are transliterated into `desktopfly/` with every constant unchanged | [DenisSergeevitch/desktop-fly](https://github.com/DenisSergeevitch/desktop-fly) | **MIT** — retained in [`LICENSE`](LICENSE) |
-| **FlyWire FAFB v783 connectome**, derived into `data/brain_points.json` and `data/circuit.json` | [FlyWire Codex](https://codex.flywire.ai) | **CC BY-NC 4.0** — see [`data/DATA_LICENSE.md`](data/DATA_LICENSE.md) |
+| **FlyWire FAFB v783 connectome** — the neuron reconstructions, synapse counts, neurotransmitter predictions, cell types and soma coordinates that `data/brain_points.json` and `data/circuit.json` are derived from. Not upstream's work and not this fork's; see [Where the neurons come from](#where-the-neurons-come-from) | [FlyWire Codex](https://codex.flywire.ai) | **CC BY-NC 4.0** — see [`data/DATA_LICENSE.md`](data/DATA_LICENSE.md) |
 | **NumPy** — the 1 kHz network | runtime dependency | BSD-3-Clause |
 | **PyOpenGL** — both renderers | runtime dependency | BSD-style (PyOpenGL licence) |
 | **PyGObject** and **GTK 3** — windows, GL contexts, the main loop | runtime dependency | LGPL-2.1-or-later |
@@ -279,10 +334,18 @@ non-commercial** even though the code is not.
 
 ## Citation
 
-If you use this, cite the connectome:
+If you use this, cite the connectome. The two FlyWire terms require the first
+two; the rest are the measurements the data actually rests on.
 
 - Dorkenwald, S. et al. *Neuronal wiring diagram of an adult brain.* Nature 634, 124–138 (2024). https://doi.org/10.1038/s41586-024-07558-y
 - Schlegel, P. et al. *Whole-brain annotation and multi-connectome cell typing of Drosophila.* Nature 634, 139–152 (2024). https://doi.org/10.1038/s41586-024-07686-5
+- Zheng, Z. et al. *A complete electron microscopy volume of the brain of adult Drosophila melanogaster.* Cell 174, 730–743 (2018). https://doi.org/10.1016/j.cell.2018.06.019
+- Dorkenwald, S. et al. *FlyWire: online community for whole-brain connectomics.* Nature Methods 19, 119–128 (2022). https://doi.org/10.1038/s41592-021-01330-0
+- Buhmann, J. et al. *Automatic detection of synaptic partners in a whole-brain Drosophila electron microscopy data set.* Nature Methods 18, 771–774 (2021). https://doi.org/10.1038/s41592-021-01183-7
+- Eckstein, N. et al. *Neurotransmitter classification from electron microscopy images at synaptic sites in Drosophila melanogaster.* Cell 187, 2574–2594 (2024). https://doi.org/10.1016/j.cell.2024.03.016
 
-and credit the original project this one is built on:
+FlyWire is a project of Princeton University and collaborators. Please also
+respect the FlyWire community guidelines and the CC BY-NC terms on the data.
+
+Credit the original project this one is built on:
 [DenisSergeevitch/desktop-fly](https://github.com/DenisSergeevitch/desktop-fly).

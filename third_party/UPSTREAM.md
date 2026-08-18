@@ -40,3 +40,12 @@ naming the upstream file and function, for example `# port of Sim.swift LIFSim.s
 `../data/*.json` are derived from FlyWire FAFB v783 and are **CC BY-NC 4.0**,
 not MIT. See `../data/DATA_LICENSE.md` for the terms and the two required
 citations.
+
+This data is the work of neither upstream nor this fork. The neurons were
+imaged by Zheng et al. (Cell 2018), reconstructed and proofread by the FlyWire
+community (Dorkenwald et al., Nature Methods 2022), their synapses detected by
+Buhmann et al. (Nature Methods 2021), their neurotransmitters predicted by
+Eckstein et al. (Cell 2024), and released with cell-type annotations by
+Dorkenwald et al. and Schlegel et al. (Nature 2024). The README section "Where
+the neurons come from" states the chain in full; upstream's contribution is the
+selection of which 668 of those neurons to simulate and what each one drives.

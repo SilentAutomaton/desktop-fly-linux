@@ -709,11 +709,32 @@ came from and any deliberate deviation.
   original idea, the connectome circuit selection, the simulation tuning, the behaviour model,
   the body geometry, the ETL and the test suites. MIT.
 - **[FlyWire](https://flywire.ai)** / [Codex](https://codex.flywire.ai) — the FAFB v783
-  connectome. Data under CC BY-NC 4.0. Cite:
+  connectome itself. Neither upstream nor this fork digitised any neuron; every number in
+  `data/` is downstream of the following measurements, and the README states the chain in full
+  under "Where the neurons come from". Data under CC BY-NC 4.0. Cite:
+  - Zheng, Z. et al. *A complete electron microscopy volume of the brain of adult Drosophila
+    melanogaster.* Cell 174, 730–743 (2018). <https://doi.org/10.1016/j.cell.2018.06.019> —
+    the FAFB electron-microscopy volume, imaged in Davi Bock's lab at Janelia.
+  - Dorkenwald, S. et al. *FlyWire: online community for whole-brain connectomics.* Nature
+    Methods 19, 119–128 (2022). <https://doi.org/10.1038/s41592-021-01330-0> — the segmentation
+    and community proofreading platform at Princeton.
+  - Buhmann, J. et al. *Automatic detection of synaptic partners in a whole-brain Drosophila
+    electron microscopy data set.* Nature Methods 18, 771–774 (2021).
+    <https://doi.org/10.1038/s41592-021-01183-7> — the synapse counts on every edge.
+  - Eckstein, N. et al. *Neurotransmitter classification from electron microscopy images at
+    synaptic sites in Drosophila melanogaster.* Cell 187, 2574–2594 (2024).
+    <https://doi.org/10.1016/j.cell.2024.03.016> — the `nt_type` field, which is the only reason
+    the weights in this simulation have a sign at all.
   - Dorkenwald, S. et al. *Neuronal wiring diagram of an adult brain.* Nature 634, 124–138
     (2024). <https://doi.org/10.1038/s41586-024-07558-y>
   - Schlegel, P. et al. *Whole-brain annotation and multi-connectome cell typing of Drosophila.*
-    Nature 634, 139–152 (2024). <https://doi.org/10.1038/s41586-024-07686-5>
+    Nature 634, 139–152 (2024). <https://doi.org/10.1038/s41586-024-07686-5> — the cell-type
+    annotations `etl.py` selects on.
+- **The functional literature** the role assignment follows: which cell type drives which
+  behaviour is upstream's design choice, informed by published physiology — the giant fiber's
+  looming-driven escape (von Reyn et al.; Ache et al.), DNp09 initiating forward walking
+  (Bidaye et al., Neuron 2020), MDN driving backward walking (Bidaye et al., Science 2014),
+  DNa01/DNa02 steering (Rayshubskiy et al.).
 
 Upstream's honesty section is carried over verbatim into the README: the connectome gives
 wiring, not physiology. The LIF dynamics, the neurotransmitter signs, the gap-junction boost,
