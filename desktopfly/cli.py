@@ -25,6 +25,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="17 end-to-end neuron-to-body checks, headless, exit 0 on pass",
     )
     parser.add_argument(
+        "--probe",
+        action="store_true",
+        help="print the detected backends and every sensor reading, then exit",
+    )
+    parser.add_argument(
         "--snapshot", metavar="PATH", help="offscreen render of the fly body, for comparison"
     )
     parser.add_argument("--brainshot", metavar="PATH", help="offscreen render of the brain map")
@@ -49,6 +54,12 @@ def main(argv: list[str] | None = None) -> int:
 
         return run_behavior(seed=args.seed)
 
+    if args.probe:
+        from .platform.detect import detect
+
+        for line in detect().describe():
+            print(line)
+        return 0
     if args.snapshot:
         from pathlib import Path
 
