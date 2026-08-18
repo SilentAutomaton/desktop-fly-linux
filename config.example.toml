@@ -1,0 +1,48 @@
+# DesktopFly for Linux — every setting, with its default.
+#
+# The file is optional. With no config at all the fly behaves exactly as the
+# macOS original does, so only add what you actually want to change.
+# Copy to $XDG_CONFIG_HOME/desktop-fly/config.toml (usually ~/.config/desktop-fly/).
+#
+# Physics is not here. The membrane time constant, the synaptic weight scale and
+# the behaviour thresholds live in desktopfly/constants.py, because they are the
+# operating point the test suites certify and not a matter of taste.
+
+[fly]
+count = 1                 # extra flies carry no brain and use the legacy behaviour
+scale = 1.15              # body size multiplier
+edge_margin = 50          # px kept clear of the output edge when picking a flight target
+
+[display]
+output = ""               # "" follows the compositor's current output; else a name like "eDP-1"
+target_fps = 60
+shadows = true
+
+[brain]
+show_on_start = false     # the tray menu and `desktop-fly ctl brain` toggle it
+window_size = [480, 400]
+
+[senses]
+window_poll_hz = 1.4      # how often window geometry is re-read; upstream polls every 0.7 s
+pointer_poll_hz = 30
+input_devices = "auto"    # "auto" reads /dev/input when permitted, "off" never does
+ledges = true             # window top edges are walkable terrain
+
+[thermal]
+# Driver names to look for in /sys/class/hwmon, best first. The reading is
+# normalised against that same chip's crit or max threshold, so no machine
+# should need cold_c and hot_c at all.
+sensors = ["coretemp", "k10temp", "zenpower", "cpu_thermal", "cpu-thermal",
+           "soc_thermal", "x86_pkg_temp", "acpitz"]
+cold_c = 40.0             # only used when the chip exposes no threshold of its own
+hot_c = 95.0
+
+[circadian]
+enabled = true
+sleep_idle_night_s = 600   # idle this long between 22:00 and 06:00 and the fly sleeps
+sleep_idle_any_s = 1800    # idle this long at any hour and it sleeps anyway
+
+[sim]
+enabled = true            # false disables the connectome entirely: legacy behaviour only
+max_step_ms = 50          # cap on simulated milliseconds per frame, so a stall cannot burst
+# seed = 1                # fix the network's random baselines and noise, for reproducible runs
