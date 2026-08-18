@@ -10,3 +10,8 @@ dist/
 # diagnostics output (intentional images live in assets/)
 /*.png
 /config.toml
+
+# makepkg output
+/pkg/
+/src/
+/*.pkg.tar.zst

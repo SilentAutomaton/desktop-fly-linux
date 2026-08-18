@@ -8,6 +8,7 @@ the acceptance criteria for this port.
 
 from __future__ import annotations
 
+import random
 import sys
 from collections.abc import Callable
 
@@ -17,6 +18,7 @@ from desktopfly import constants as k
 from desktopfly.behavior import Fly, State
 from desktopfly.dataset import BrainData, load_brain_data
 from desktopfly.environment import Ledge, circadian_activity
+from desktopfly.selftest import DEFAULT_SEED
 from desktopfly.signals import SignalBuilder
 from desktopfly.sim import BrainSignals, LIFSim
 
@@ -74,6 +76,10 @@ def _walk_signals() -> BrainSignals:
 
 
 def run(seed: int | None = None) -> int:
+    # Seeded by default, for the reason given in sim_test: the body's wandering
+    # is as random as the network's noise, and both feed these thresholds.
+    seed = DEFAULT_SEED if seed is None else seed
+    random.seed(seed)
     data = load_brain_data()
     if data is None:
         print("no data/ — run etl.py first", file=sys.stderr)

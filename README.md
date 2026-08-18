@@ -145,15 +145,23 @@ model, not a measurement — see [What's modelled vs. measured](#whats-modelled-
 Requirements: Linux, Python 3.11+, a compositor with `wlr-layer-shell`
 (Hyprland, sway, river, Wayfire, KDE) or any X11 window manager.
 
-On Arch, everything is in the official repositories — no AUR packages:
+On Arch, build and install a real package — every dependency is in the official
+repositories, no AUR:
 
 ```sh
-sudo pacman -S python-numpy python-opengl python-gobject gtk3 gtk-layer-shell \
-               libayatana-appindicator python-xlib
 git clone <this repository>
 cd desktop-fly
-pip install --user -e .
+makepkg -si
 ```
+
+`makepkg` runs both test suites as its check step, installs the connectome to
+`/usr/share/desktop-fly/data`, and gives you `pacman -R desktop-fly` to undo it.
+The dependencies it pulls in are `python-numpy python-opengl python-gobject
+gtk3 gtk-layer-shell`, plus the optional `libayatana-appindicator` (tray) and
+`python-xlib` (X11 backend).
+
+To run from a checkout instead, install those packages by hand and use
+`python -m desktopfly`.
 
 Debian/Ubuntu equivalents: `python3-numpy python3-opengl python3-gi
 gir1.2-gtk-3.0 gir1.2-gtklayershell-0.1 gir1.2-ayatanaappindicator3-0.1

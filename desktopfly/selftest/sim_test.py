@@ -8,13 +8,19 @@ after any change to sim.py, constants.py or etl.py.
 
 from __future__ import annotations
 
+import random
 import sys
 
 from desktopfly.dataset import load_brain_data
+from desktopfly.selftest import DEFAULT_SEED
 from desktopfly.sim import LIFSim
 
 
 def run(seed: int | None = None) -> int:
+    # Seeded by default: the network is stochastic, and a suite that fails one
+    # run in ten is a dice roll rather than a gate. Pass --seed to explore.
+    seed = DEFAULT_SEED if seed is None else seed
+    random.seed(seed)
     data = load_brain_data()
     if data is None:
         print("no data/ — run etl.py first", file=sys.stderr)

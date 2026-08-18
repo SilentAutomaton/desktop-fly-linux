@@ -37,9 +37,6 @@ Upstream = "https://github.com/DenisSergeevitch/desktop-fly"
 [tool.setuptools]
 packages = ["desktopfly", "desktopfly.render", "desktopfly.platform", "desktopfly.selftest"]
 
-[tool.setuptools.package-data]
-desktopfly = ["../data/*.json"]
-
 [tool.ruff]
 line-length = 100
 target-version = "py311"
