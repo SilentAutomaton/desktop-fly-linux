@@ -149,8 +149,8 @@ On Arch, build and install a real package — every dependency is in the officia
 repositories, no AUR:
 
 ```sh
-git clone <this repository>
-cd desktop-fly
+git clone https://github.com/SilentAutomaton/desktop-fly-linux.git
+cd desktop-fly-linux
 makepkg -si
 ```
 
