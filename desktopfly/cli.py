@@ -25,6 +25,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="17 end-to-end neuron-to-body checks, headless, exit 0 on pass",
     )
     parser.add_argument(
+        "--snapshot", metavar="PATH", help="offscreen render of the fly body, for comparison"
+    )
+    parser.add_argument("--brainshot", metavar="PATH", help="offscreen render of the brain map")
+    parser.add_argument(
         "--seed",
         type=int,
         default=None,
@@ -44,6 +48,23 @@ def main(argv: list[str] | None = None) -> int:
         from .selftest.behavior_test import run as run_behavior
 
         return run_behavior(seed=args.seed)
+
+    if args.snapshot:
+        from pathlib import Path
+
+        from .render.offscreen import snapshot_fly
+
+        snapshot_fly(Path(args.snapshot))
+        print(f"snapshot written to {args.snapshot}")
+        return 0
+    if args.brainshot:
+        from pathlib import Path
+
+        from .render.offscreen import snapshot_brain
+
+        snapshot_brain(Path(args.brainshot))
+        print(f"snapshot written to {args.brainshot}")
+        return 0
 
     print("nothing to do yet: the overlay lands in a later step", file=sys.stderr)
     return 0

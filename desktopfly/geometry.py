@@ -153,33 +153,27 @@ def cone_mesh(
 
 
 def wing_mesh(mat: Material, segments: int = 28) -> Mesh:
-    """Port of FlyModel.swift wingShape(): an extruded oval, flat in XY.
+    """Port of FlyModel.swift wingShape(): a flat oval disc.
 
     Upstream builds it from NSBezierPath(ovalIn:) over the rect
     (x -2.6, y -15.5, w 5.2, h 16.5) with a 0.12 extrusion, so the wing reaches
-    backwards from its hinge and lies over the abdomen when folded.
+    backwards from its hinge and lies over the abdomen when folded. Only one
+    face is generated: the material is double-sided, so culling is off and a
+    second face would double the 0.28 alpha and turn the wing milky.
     """
     cx, cy = 0.0, -15.5 + 16.5 / 2.0
     rx, ry = 5.2 / 2.0, 16.5 / 2.0
-    half_depth = 0.12 / 2.0
     positions, normals, uvs, indices = [], [], [], []
-    for sign in (1.0, -1.0):  # front face, then back face
-        base = len(positions)
-        positions.append((cx, cy, sign * half_depth))
-        normals.append((0.0, 0.0, sign))
-        uvs.append((0.5, 0.5))
-        for segment in range(segments + 1):
-            angle = 2.0 * math.pi * segment / segments
-            positions.append(
-                (cx + rx * math.cos(angle), cy + ry * math.sin(angle), sign * half_depth)
-            )
-            normals.append((0.0, 0.0, sign))
-            uvs.append((0.5 + 0.5 * math.cos(angle), 0.5 + 0.5 * math.sin(angle)))
-        for segment in range(segments):
-            if sign > 0:
-                indices += [base, base + 1 + segment, base + 2 + segment]
-            else:
-                indices += [base, base + 2 + segment, base + 1 + segment]
+    positions.append((cx, cy, 0.0))
+    normals.append((0.0, 0.0, 1.0))
+    uvs.append((0.5, 0.5))
+    for segment in range(segments + 1):
+        angle = 2.0 * math.pi * segment / segments
+        positions.append((cx + rx * math.cos(angle), cy + ry * math.sin(angle), 0.0))
+        normals.append((0.0, 0.0, 1.0))
+        uvs.append((0.5 + 0.5 * math.cos(angle), 0.5 + 0.5 * math.sin(angle)))
+    for segment in range(segments):
+        indices += [0, 1 + segment, 2 + segment]
     return _finish(positions, normals, uvs, indices, mat)
 
 
