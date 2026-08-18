@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.mypy_cache/
+.ruff_cache/
+
+# diagnostics output (intentional images live in assets/)
+/*.png
+/config.toml
