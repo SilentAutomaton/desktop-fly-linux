@@ -55,6 +55,7 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RET", "TID"]
 "desktopfly/platform/*" = ["TID251"]
 "desktopfly/render/*" = ["TID251"]
 "desktopfly/tray.py" = ["TID251"]
+"desktopfly/runtime.py" = ["TID251"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "gi".msg = "core modules must stay headless; GTK belongs in desktopfly/platform"

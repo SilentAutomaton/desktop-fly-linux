@@ -1,20 +1,43 @@
 """Command line entry point.
 
-Port of the argument handling at the bottom of main.swift. The run, control
-socket, probe and snapshot subcommands are added as their modules land; the two
-test suites work from the start because the core is headless.
+Port of the argument handling at the bottom of main.swift, plus the control
+client that replaces the menu bar for anyone driving the fly from compositor
+keybinds.
 """
 
 from __future__ import annotations
 
 import argparse
-import sys
+import logging
+from pathlib import Path
+
+COMMANDS = (
+    "pause",
+    "resume",
+    "brain",
+    "escape",
+    "scare",
+    "add-fly",
+    "remove-fly",
+    "next-output",
+    "quit",
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="desktop-fly",
         description="A connectome-driven fruit fly on the Linux desktop.",
+        epilog="With no arguments the fly is released onto the current output.",
+    )
+    parser.add_argument("--config", type=Path, help="path to a config.toml")
+    parser.add_argument(
+        "--output", help="name of the output to live on, e.g. eDP-1 (overrides the config)"
+    )
+    parser.add_argument(
+        "--probe",
+        action="store_true",
+        help="print the detected backends and every sensor reading, then exit",
     )
     parser.add_argument(
         "--simtest", action="store_true", help="circuit invariants, headless, exit 0 on pass"
@@ -23,11 +46,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--behaviortest",
         action="store_true",
         help="17 end-to-end neuron-to-body checks, headless, exit 0 on pass",
-    )
-    parser.add_argument(
-        "--probe",
-        action="store_true",
-        help="print the detected backends and every sensor reading, then exit",
     )
     parser.add_argument(
         "--snapshot", metavar="PATH", help="offscreen render of the fly body, for comparison"
@@ -39,11 +57,26 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="seed the network's random baselines and noise, for reproducible runs",
     )
+    parser.add_argument("--verbose", action="store_true", help="log what the backends decided")
+
+    subparsers = parser.add_subparsers(dest="subcommand")
+    control = subparsers.add_parser(
+        "ctl", help="send a command to a running fly (the same set as the tray menu)"
+    )
+    control.add_argument("command", choices=COMMANDS)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO, format="desktop-fly: %(message)s"
+    )
+
+    if args.subcommand == "ctl":
+        from .runtime import send_command
+
+        return send_command(args.command)
 
     if args.simtest:
         from .selftest.sim_test import run
@@ -53,7 +86,6 @@ def main(argv: list[str] | None = None) -> int:
         from .selftest.behavior_test import run as run_behavior
 
         return run_behavior(seed=args.seed)
-
     if args.probe:
         from .platform.detect import detect
 
@@ -61,24 +93,27 @@ def main(argv: list[str] | None = None) -> int:
             print(line)
         return 0
     if args.snapshot:
-        from pathlib import Path
-
         from .render.offscreen import snapshot_fly
 
         snapshot_fly(Path(args.snapshot))
         print(f"snapshot written to {args.snapshot}")
         return 0
     if args.brainshot:
-        from pathlib import Path
-
         from .render.offscreen import snapshot_brain
 
         snapshot_brain(Path(args.brainshot))
         print(f"snapshot written to {args.brainshot}")
         return 0
 
-    print("nothing to do yet: the overlay lands in a later step", file=sys.stderr)
-    return 0
+    from .config import load
+    from .runtime import Application
+
+    config = load(args.config)
+    if args.output:
+        config.display.output = args.output
+    if args.seed is not None:
+        config.sim.seed = args.seed
+    return Application(config).run()
 
 
 if __name__ == "__main__":
