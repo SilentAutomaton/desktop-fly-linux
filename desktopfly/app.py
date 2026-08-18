@@ -80,6 +80,7 @@ class Coordinator:
         self._last_pointer_move = time.monotonic()
         self._last_window_change = time.monotonic()
         self._last_key_time = 0.0
+        self._last_input = 0.0
         self._tempo = 1.0
         self._activity = 1.0
         self._sleepy = False
@@ -160,22 +161,26 @@ class Coordinator:
 
     def _poll_activity(self) -> None:
         activity = self.backends.taps.drain()
+        now = time.monotonic()
         if activity.keys:
-            self._last_key_time = time.monotonic()
+            self._last_key_time = now
+        if activity.keys or activity.taps:
+            self._last_input = now
         for _ in range(min(activity.taps, 4)):  # a burst of clicks is still one startle
             self._inject_tap()
 
     def _poll_ambient(self) -> None:
         now = datetime.now()
         hour = now.hour + now.minute / 60
+        # Upstream asks macOS for the seconds since the user last touched
+        # anything. Here that is reconstructed from the senses that exist: the
+        # cursor moving, the window list changing, and - when permitted - a real
+        # key or button going down.
+        now = time.monotonic()
         idle = min(
-            time.monotonic() - self._last_pointer_move,
-            time.monotonic() - self._last_window_change,
-            self.backends.taps.drain().seconds_since_event
-            if not self.backends.taps.available
-            else time.monotonic() - self._last_key_time
-            if self._last_key_time
-            else float("inf"),
+            now - self._last_pointer_move,
+            now - self._last_window_change,
+            now - self._last_input if self._last_input else float("inf"),
         )
         self._tempo = thermal_tempo(self.backends.thermal.load())
         if self.config.circadian.enabled:

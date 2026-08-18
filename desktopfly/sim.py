@@ -214,7 +214,7 @@ class LIFSim:
 
         # Which rate readout each neuron contributes to, or -1 for none.
         self._rate_group = np.full(self.n, -1, dtype=np.int64)
-        for indices, slot in (
+        for members, slot in (
             (self.groups.loom_left, RATE_LOOM),
             (self.groups.loom_right, RATE_LOOM),
             (self.groups.dna_left, RATE_DNA_L),
@@ -224,7 +224,7 @@ class LIFSim:
             (self.groups.groom, RATE_GROOM),
             (self.groups.escape_wing, RATE_ESCAPE_WING),
         ):
-            self._rate_group[indices] = slot
+            self._rate_group[members] = slot
         sizes = np.maximum(
             np.bincount(self._rate_group[self._rate_group >= 0], minlength=RATE_GROUPS), 1
         ).astype(np.float64)
@@ -280,7 +280,7 @@ class LIFSim:
         np.add.at(self._w_inhibitory, (pre[~excitatory], post[~excitatory]), weight[~excitatory])
         # Most neurons inhibit nobody; checking that is cheaper than summing a
         # row of zeros into the delay queue every millisecond.
-        self._inhibits = self._w_inhibitory.any(axis=1)
+        self._inhibits: npt.NDArray[np.bool_] = np.any(self._w_inhibitory != 0, axis=1)
 
     # -- public API ---------------------------------------------------------
 

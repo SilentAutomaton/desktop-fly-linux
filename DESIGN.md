@@ -231,6 +231,7 @@ desktop-fly/
     scenegraph.py        Node                                (stand-in for SCNNode)
     environment.py       circadian_activity, WindowSense     (Environment.swift)
     app.py               Coordinator, frame loop             (main.swift Coordinator)
+    runtime.py           GTK application, control socket     (main.swift AppDelegate)
     tray.py              StatusNotifierItem menu             (main.swift AppDelegate)
     render/
       gl.py              shader, mesh upload, ortho camera, blob shadow
@@ -240,6 +241,7 @@ desktop-fly/
       base.py            the whole OS contract, abstract
       detect.py          probe environment, assemble a backend set, log the choice
       gtk_overlay.py     GTK3 + GLArea; layer-shell on Wayland, dock window on X11
+      gtk_brain_window.py  the interactive brain map toplevel
       hyprland.py        Hyprland IPC: clients, monitors, cursorpos, event socket
       sway.py            sway/i3 IPC: get_tree, get_outputs
       x11.py             _NET_CLIENT_LIST, XQueryPointer, Xinerama
@@ -687,6 +689,8 @@ the Shell notification area. Nothing in `sim.py`, `signals.py`, `behavior.py`, `
    `environment.py`. No I/O, no GTK, no GL.
 4. Both self-test suites — **before any pixels**, so the port is proven correct against upstream
    numbers while it is still small.
+   *(As built, `scenegraph.py` and `geometry.py` moved into step 3: they are pure geometry with
+   no renderer, and `behavior.py` needs the node tree they build.)*
 5. Renderer: `scenegraph.py`, `geometry.py`, `render/gl.py`, `render/brain.py`,
    `render/offscreen.py`.
 6. Platform layer: `base.py`, `detect.py`, `gtk_overlay.py`, `hyprland.py`, `sway.py`, `x11.py`,
