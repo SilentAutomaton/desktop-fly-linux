@@ -86,6 +86,9 @@ class Fly:
         self.scare_cooldown = 0.0
         self.dart_cooldown = 0.0
         self.backward_timer = 0.0
+        # Radians of body saccade not yet spent, and the rate to spend them at.
+        self.saccade = 0.0
+        self.saccade_rate = 0.0
         self.dart_timer = 0.0
         self.state_age = 0.0
 
@@ -148,8 +151,10 @@ class Fly:
         self._live_wing = signals.wing_drive if signals else 0.0
 
         if self.state is State.FLYING:
+            self.saccade = 0.0  # airborne heading is geometric, not a walk saccade
             self._update_flight(dt)
         elif signals is not None:
+            self._step_saccade(dt)
             self._brain_behavior(signals, dt, bounds, mouse)
             if self.state is State.WALKING:
                 self._update_walk(dt, bounds)
@@ -205,11 +210,12 @@ class Fly:
             self.ledge = None
             self._set_state(State.WALKING)
             if mouse is not None:
+                self.saccade = 0.0  # fleeing turns are instant, not saccadic
                 self.heading = math.atan2(self.y - mouse[1], self.x - mouse[0]) + random.uniform(
                     -0.4, 0.4
                 )
             else:
-                self.heading += random.uniform(-1.5, 1.5)
+                self._start_saccade()
             self.speed = random.uniform(*k.DART_SPEED)
             self.dart_timer = random.uniform(*k.DART_DURATION_S)
             self.dart_cooldown = k.DART_COOLDOWN_S
@@ -237,7 +243,7 @@ class Fly:
             and self.state_age > k.STATE_DWELL_S
         ):
             self._set_state(State.WALKING)
-            self.heading += random.uniform(-0.8, 0.8)
+            self._start_saccade()
         elif (
             self.state is State.WALKING
             and self.dart_timer == 0
@@ -284,6 +290,7 @@ class Fly:
                 self.start_flight(bounds, away_from=mouse)
             elif distance < k.NERVOUS_RADIUS and self.state is not State.WALKING:
                 self._set_state(State.WALKING)
+                self.saccade = 0.0  # fleeing turns are instant, not saccadic
                 self.heading = math.atan2(self.y - mouse[1], self.x - mouse[0]) + random.uniform(
                     -0.4, 0.4
                 )
@@ -292,6 +299,7 @@ class Fly:
                 self.scare_cooldown = 1.0
         if self.state is State.FLYING:
             return
+        self._step_saccade(dt)
         self.state_timer -= dt
         if self.state_timer <= 0:
             if self.state is State.WALKING and random.random() < 0.10:
@@ -311,7 +319,7 @@ class Fly:
             elif roll < 0.55:
                 self.state_timer = random.uniform(0.3, 0.8)
                 self.speed = random.uniform(95.0, 150.0)
-                self.heading += random.uniform(-1.2, 1.2)
+                self._start_saccade()
             else:
                 self.state_timer = random.uniform(1.5, 5.0)
                 self.speed = random.uniform(18.0, 45.0)
@@ -323,7 +331,7 @@ class Fly:
                 self.state = State.WALKING
                 self.state_timer = random.uniform(1.5, 5.0)
                 self.speed = random.uniform(18.0, 45.0)
-                self.heading += random.uniform(-1.5, 1.5)
+                self._start_saccade()
         elif self.state is State.GROOMING:
             self.state = State.IDLE
             self.state_timer = random.uniform(0.3, 1.0)
@@ -405,6 +413,7 @@ class Fly:
     ) -> None:
         self.state = State.FLYING
         self.ledge = None
+        self.saccade = 0.0
         chosen_effort = (
             effort
             if effort is not None
@@ -469,6 +478,28 @@ class Fly:
         self.scare_cooldown = k.SCARE_COOLDOWN_ESCAPE_S if escape else k.SCARE_COOLDOWN_CASUAL_S
         self.model.blur_wing_left.hidden = False
         self.model.blur_wing_right.hidden = False
+
+    def _start_saccade(self) -> None:
+        """Queue a body saccade instead of snapping the heading.
+
+        Escape turns do NOT go through this: a fleeing fly extends its legs in
+        3.33 ms (Card & Dickinson 2008, J Exp Biol 211:341), so rate-limiting a
+        turn away from the cursor would be a regression, not a fix.
+        """
+        sign = -1.0 if random.random() < 0.5 else 1.0
+        self.saccade = sign * random.uniform(*k.SACCADE_AMPLITUDE)
+        self.saccade_rate = self.saccade / k.SACCADE_DURATION_S
+
+    def _step_saccade(self, dt: float) -> None:
+        if self.saccade == 0.0:
+            return
+        step = self.saccade_rate * dt
+        if abs(step) >= abs(self.saccade):
+            self.heading += self.saccade
+            self.saccade = 0.0
+        else:
+            self.heading += step
+            self.saccade -= step
 
     def _land(self) -> None:
         self.state = State.IDLE
@@ -551,7 +582,7 @@ class Fly:
             stride = max(5.0, 2 * amplitude * 13)
             frequency = clamp(speed / stride, *k.GAIT_FREQUENCY)
             self.gait_phase = math.fmod(self.gait_phase + frequency * dt, 1.0)
-            stance = k.GAIT_STANCE_FRACTION
+            stance = clamp(1 - k.SWING_DURATION_S * frequency, *k.GAIT_STANCE_LIMITS)
             for leg in self.model.legs:
                 phase = math.fmod(self.gait_phase + leg.phase, 1.0)
                 if phase < stance:

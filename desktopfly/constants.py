@@ -241,11 +241,30 @@ FLIGHT_PITCH_GAIN: Final = 2.5
 FLIGHT_PITCH_LIMIT: Final = 0.45
 FLARE_PITCH_LIMIT: Final = 0.35
 
+# A walking fly does not steer continuously. It goes nearly straight and
+# changes heading in discrete body saccades, with slow sub-threshold drift in
+# between: Geurten, Jahde, Rosner & Egelhaaf 2014 (Front Behav Neurosci 8:365)
+# scored 1140 saccades against 3348 slow turns in freely walking Canton-S at
+# 500 fps. The shape of the old code was right and the numbers were not - it
+# snapped the heading by up to 86 degrees in a single step.
+#
+# The measured mean amplitude is ~15 degrees and this range averages to it; the
+# sign is drawn separately. A 15 degree turn spent over the measured duration
+# peaks near 170 deg/s, just under the 200 deg/s those authors use as their
+# saccade detection threshold.
+SACCADE_AMPLITUDE: Final = (0.09, 0.44)  # rad, 5 to 25 degrees
+SACCADE_DURATION_S: Final = 0.09  # measured 40-120 ms, median 90
+
 # Tripod gait.
 GAIT_AMPLITUDE: Final = (0.20, 0.50)
 GAIT_AMPLITUDE_PER_SPEED: Final = 0.0022
 GAIT_FREQUENCY: Final = (3.0, 11.0)  # Hz
-GAIT_STANCE_FRACTION: Final = 0.6
+# Swing - the time a leg spends in the air - is near-constant across walking
+# speed; it is stance that scales as 1/v. Mendes, Bartos, Akay, Marka & Mann
+# 2013 (eLife 2:e00231, Table 2). The gait used a fixed 40% swing fraction,
+# which stretched the swing as the fly slowed down, the opposite of the animal.
+SWING_DURATION_S: Final = 0.035
+GAIT_STANCE_LIMITS: Final = (0.35, 0.9)
 GAIT_LIFT: Final = 0.55
 GAIT_BOB_Z: Final = 0.35
 
