@@ -72,6 +72,8 @@ class Application:
             "pause": self._toggle_pause,
             "resume": self._resume,
             "brain": self._toggle_brain,
+            "brain-fullscreen": self._toggle_brain_fullscreen,
+            "brain-hint": self._toggle_brain_hint,
             "body": self._toggle_body,
             "escape": self.coordinator.escape_test,
             "scare": self.coordinator.scare_all,
@@ -138,6 +140,14 @@ class Application:
     def _toggle_brain(self) -> None:
         if self.brain is not None:
             self.brain.toggle()
+
+    def _toggle_brain_fullscreen(self) -> None:
+        if self.brain is not None:
+            self.brain.toggle_fullscreen()
+
+    def _toggle_brain_hint(self) -> None:
+        if self.brain is not None:
+            self.brain.toggle_hint()
 
     def _toggle_body(self) -> None:
         self.coordinator.toggle_body()

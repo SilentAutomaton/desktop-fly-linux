@@ -49,6 +49,8 @@ class Tray:
         self._add_separator()
         self._pause_item = self._add_command("Pause", "pause")
         self._add_command("Show / Hide Brain", "brain")
+        self._add_command("Fullscreen Brain", "brain-fullscreen")
+        self._add_command("Hide Brain Hint", "brain-hint")
         # The item offers the other form, so it reads as an action.
         self._body_item = self._add_command("Body: Stag Beetle", "body")
         self._add_command("Escape Test (loom)", "escape")

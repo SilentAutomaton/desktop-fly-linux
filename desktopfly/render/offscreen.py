@@ -246,7 +246,7 @@ def snapshot_brain(path: Path, width: int = 720, height: int = 560) -> None:
         renderer = BrainRenderer(data.points, sim)
         renderer.initialise()
         renderer.resize(width, height)
-        renderer.angle = 0.5
+        renderer.yaw = 0.5
         # Decorate with a burst so the still shows the live look, as upstream does.
         rng = np.random.default_rng(0)
         for neuron in rng.integers(0, sim.n, 40):

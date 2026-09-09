@@ -22,7 +22,12 @@ from desktopfly.dataset import BrainPoints
 from desktopfly.render.gl import compile_program, look_at, perspective
 from desktopfly.sim import LIFSim
 
-CAMERA_POSITION = (0.0, 0.6, 29.0)
+
+def clamp(value: float, low: float, high: float) -> float:
+    return min(high, max(low, value))
+
+CAMERA_HEIGHT = 0.6
+CAMERA_DISTANCE = 29.0
 CAMERA_FOV = 46.0
 CAMERA_NEAR = 1.0
 CAMERA_FAR = 120.0
@@ -30,6 +35,14 @@ CAMERA_FAR = 120.0
 # Upstream rotates the brain by 0.35 rad every 6 s and tilts it slightly forward.
 ROTATION_RATE = 0.35 / 6.0
 TILT = -0.15
+
+# Direct manipulation. Pitch stops short of the poles so anatomical up stays up,
+# which is how every connectome viewer shows a brain; the dolly range keeps the
+# whole cloud between the near and far planes above.
+ORBIT_RATE = 0.01  # rad per pixel dragged
+PITCH_LIMIT = 1.3  # rad
+ZOOM_RATE = 0.35  # units per scroll step
+ZOOM_RANGE = (9.0, 70.0)
 
 BACKGROUND = (0.03, 0.035, 0.06, 1.0)
 
@@ -132,7 +145,9 @@ class BrainRenderer:
         self.sim = sim
         self.width = 1
         self.height = 1
-        self.angle = 0.0
+        self.yaw = 0.0
+        self.pitch = TILT
+        self.distance = CAMERA_DISTANCE
         self.paused = False  # the pointer is over the window: hold still to aim
 
         self._program = 0
@@ -173,8 +188,8 @@ class BrainRenderer:
     # -- per frame ----------------------------------------------------------
 
     def _model_matrix(self) -> npt.NDArray[np.float32]:
-        cos_a, sin_a = math.cos(self.angle), math.sin(self.angle)
-        cos_t, sin_t = math.cos(TILT), math.sin(TILT)
+        cos_a, sin_a = math.cos(self.yaw), math.sin(self.yaw)
+        cos_t, sin_t = math.cos(self.pitch), math.sin(self.pitch)
         yaw = np.array(
             [[cos_a, 0, sin_a, 0], [0, 1, 0, 0], [-sin_a, 0, cos_a, 0], [0, 0, 0, 1]],
             dtype=np.float32,
@@ -187,13 +202,28 @@ class BrainRenderer:
 
     def _view_projection(self) -> npt.NDArray[np.float32]:
         projection = perspective(CAMERA_FOV, self.width / self.height, CAMERA_NEAR, CAMERA_FAR)
-        view = look_at(CAMERA_POSITION, (0.0, 0.0, 0.0), up=(0.0, 1.0, 0.0))
+        view = look_at(
+            (0.0, CAMERA_HEIGHT, self.distance), (0.0, 0.0, 0.0), up=(0.0, 1.0, 0.0)
+        )
         return projection @ view
 
+    def orbit(self, dx: float, dy: float) -> None:
+        """Drag to look at the brain from somewhere else."""
+        self.yaw += dx * ORBIT_RATE
+        self.pitch = clamp(self.pitch + dy * ORBIT_RATE, -PITCH_LIMIT, PITCH_LIMIT)
+
+    def zoom(self, delta: float) -> None:
+        """Scroll to dolly the camera, bounded by the near and far planes."""
+        self.distance = clamp(self.distance - delta * ZOOM_RATE, *ZOOM_RANGE)
+
     def step(self, dt: float) -> None:
-        """Advance the rotation and drain the spike bus into the flash pool."""
+        """Advance the rotation and drain the spike bus into the flash pool.
+
+        The flash pool decays whether or not the rotation is held, so hovering
+        to aim at a region never stops the activity being aimed at.
+        """
         if not self.paused:
-            self.angle += ROTATION_RATE * dt
+            self.yaw += ROTATION_RATE * dt
         if self.sim.spike_bus is not None:
             for event in self.sim.spike_bus.pop_all():
                 self.flash(event.neuron, event.is_gf)

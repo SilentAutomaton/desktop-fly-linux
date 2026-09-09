@@ -15,6 +15,8 @@ COMMANDS = (
     "pause",
     "resume",
     "brain",
+    "brain-fullscreen",
+    "brain-hint",
     "body",
     "escape",
     "scare",
