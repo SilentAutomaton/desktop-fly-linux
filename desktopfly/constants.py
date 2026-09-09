@@ -82,6 +82,55 @@ SPIKE_BUS_CAPACITY: Final = 256
 SPIKE_SAMPLE_TARGET: Final = 12
 
 # ---------------------------------------------------------------------------
+# MaleCNS locomotor circuit — port of Locomotor.swift
+# ---------------------------------------------------------------------------
+#
+# A second, separate connectome, from a second, separate animal. The anatomy
+# and the contact counts are measured; every number in this section is a
+# modelling assumption laid on top of them. data/LOCOMOTOR_PROVENANCE.md is the
+# authority on where that line falls.
+
+LOCOMOTOR_SYNAPTIC_GAIN: Final = 2.4
+LOCOMOTOR_BASELINE: Final = 0.022  # deterministic: this circuit carries no noise
+LOCOMOTOR_ADAPTATION_KICK: Final = 0.01  # per spike
+
+# Retained input is normalised per target, so a contact count is never treated
+# as a measured conductance. Relative counts and transmitter signs survive; the
+# floor stops a sparsely-sampled cell from having enormous effective weights.
+LOCOMOTOR_INPUT_FLOOR: Final = 60.0
+
+LOCOMOTOR_MEMBRANE_DECAY: Final = 0.9512294  # exp(-1/20): 20 ms
+LOCOMOTOR_MEMBRANE_FLOOR: Final = -1.0
+LOCOMOTOR_EXCITATORY_DECAY: Final = 0.8187308  # exp(-1/5): 5 ms synaptic current
+LOCOMOTOR_INHIBITORY_DECAY: Final = 0.9048374  # exp(-1/10): 10 ms
+LOCOMOTOR_RATE_DECAY: Final = 0.9048374  # 10 ms rate estimate, for fast muscles
+LOCOMOTOR_ADAPTATION_DECAY: Final = 0.9950125  # exp(-1/200): 200 ms
+LOCOMOTOR_REFRACTORY_MS: Final = 2
+LOCOMOTOR_RATE_KICK: Final = 95.16258  # per spike; with the decay above this is Hz
+
+# The homologous population-rate interface between the female FlyWire brain and
+# the male nerve cord. It adds current to real cells; it never fabricates a
+# graph edge, and there is no cross-specimen synapse in either dataset.
+DESCENDING_DRIVE_PER_HZ: Final = 0.004
+DESCENDING_DRIVE_LIMIT: Final = 0.35
+
+# Leg-local sensory transduction. The annotation tables do not identify these
+# cells' angle or velocity tuning, their preferred direction or the joint they
+# sense, so every mapping below is a declared model assumption rather than a
+# measured neuron-specific response.
+SENSORY_DRIVE_GAIN: Final = 0.10
+SENSORY_LOAD_GAIN: Final = 6.0  # campaniform sensilla: load
+SENSORY_HAIR_VELOCITY_SCALE: Final = 20.0  # hair plates: hip excursion and speed
+SENSORY_KNEE_VELOCITY_SCALE: Final = 20.0  # chordotonal: joint excursion and speed
+SENSORY_HIP_VELOCITY_SCALE: Final = 16.0
+SENSORY_KNEE_EXCURSION_GAIN: Final = 0.35
+
+# Firing rate at which a muscle channel reaches half activation. A muscle label
+# supplies no force, moment arm or activation kinetics, so this saturation is a
+# body-model choice too.
+MOTOR_HALF_ACTIVATION_HZ: Final = 50.0
+
+# ---------------------------------------------------------------------------
 # Rates to body commands — port of main.swift SignalBuilder
 # ---------------------------------------------------------------------------
 
