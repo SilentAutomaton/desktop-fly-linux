@@ -43,6 +43,16 @@ HINT_LINES = (
     "Click to stimulate · Double-click for fullscreen",
 )
 
+# The hint sits on the near-black GL background, so it cannot take its colour
+# from the desktop theme: on a dark theme it would be invisible.
+HINT_CSS = b"""
+.desktop-fly-hint label {
+    color: #9e9e9e;
+    font-size: 10px;
+    font-weight: 500;
+}
+"""
+
 
 class BrainWindow:
     def __init__(self, points: BrainPoints, sim: LIFSim, size: tuple[int, int] = (480, 400)):
@@ -100,7 +110,12 @@ class BrainWindow:
         self.hint.set_valign(Gtk.Align.START)
         self.hint.set_margin_start(10)
         self.hint.set_margin_top(8)
-        self.hint.set_no_show_all(True)
+        self.hint.get_style_context().add_class("desktop-fly-hint")
+        provider = Gtk.CssProvider()
+        provider.load_from_data(HINT_CSS)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
         for line in HINT_LINES:
             label = Gtk.Label(label=line)
             label.set_halign(Gtk.Align.START)
