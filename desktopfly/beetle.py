@@ -23,7 +23,6 @@ from .geometry import (
     Color,
     FlyModel,
     Leg,
-    Material,
     bezier_outline,
     blend,
     box_mesh,
@@ -35,7 +34,7 @@ from .geometry import (
     oval_mesh,
     sphere_mesh,
 )
-from .scenegraph import Node
+from .scenegraph import Material, Mesh, Node
 
 SHELL_BLACK: Color = (0.13, 0.09, 0.07, 1.0)
 SHELL_RED: Color = (0.31, 0.13, 0.07, 1.0)
@@ -49,7 +48,7 @@ ABDOMEN_BROWN: Color = (0.18, 0.11, 0.08, 1.0)
 HINDWING_FOLD = 0.13
 
 
-def _elytron_mesh(side: float) -> object:
+def _elytron_mesh(side: float) -> Mesh:
     """One wing case, hinged at its front-inner corner.
 
     The path is mirrored rather than the node, so both elytra rotate with
@@ -68,7 +67,7 @@ def _elytron_mesh(side: float) -> object:
     return extruded_mesh(outline, 2.2, shell)
 
 
-def _hindwing_mesh(side: float) -> object:
+def _hindwing_mesh(side: float) -> Mesh:
     """The membranous surface that actually beats, hidden until the elytra open."""
     membrane = Material(
         diffuse=(0.58, 0.47, 0.36, 0.42), specular=0.85, shininess=0.85, double_sided=True
@@ -76,7 +75,7 @@ def _hindwing_mesh(side: float) -> object:
     return oval_mesh((-1.9, -11.5, 3.8, 12.0), membrane, rotation=-side * HINDWING_FOLD)
 
 
-def _pronotum_mesh() -> object:
+def _pronotum_mesh() -> Mesh:
     """Narrow at the head, widest at mid-length, squared off where the elytra meet.
 
     This outline is what says "beetle" from directly above.

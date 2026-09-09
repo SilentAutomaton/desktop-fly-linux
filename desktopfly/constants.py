@@ -367,7 +367,6 @@ LEDGE_ATTACH_DISTANCE: Final = 20.0
 LEDGE_ATTACH_CHANCE: Final = 0.9  # per second while overlapping an edge
 LEDGE_LEAVE_CHANCE: Final = 0.05  # per second while attached
 LEDGE_SNAP_LERP: Final = 10.0
-LEDGE_ALIGN_LERP: Final = 6.0
 LEDGE_WANDER: Final = 0.2  # rad/s of heading noise while on an edge
 LEDGE_END_MARGIN: Final = 6.0
 LEDGE_LOST_DISTANCE: Final = 40.0  # the edge moved this far: the ground vanished

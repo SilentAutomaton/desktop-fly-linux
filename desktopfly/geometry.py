@@ -170,7 +170,10 @@ def box_mesh(width: float, height: float, length: float, mat: Material) -> Mesh:
         ((0.0, 1.0, 0.0), ((-hx, hy, hz), (hx, hy, hz), (hx, hy, -hz), (-hx, hy, -hz))),
         ((0.0, -1.0, 0.0), ((-hx, -hy, -hz), (hx, -hy, -hz), (hx, -hy, hz), (-hx, -hy, hz))),
     )
-    positions, normals, uvs, indices = [], [], [], []
+    positions: list[tuple[float, float, float]] = []
+    normals: list[tuple[float, float, float]] = []
+    uvs: list[tuple[float, float]] = []
+    indices: list[int] = []
     for normal, corners in faces:
         base = len(positions)
         corner_uvs = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
@@ -237,7 +240,10 @@ def extruded_mesh(outline: list[tuple[float, float]], depth: float, mat: Materia
     front, back = depth / 2.0, -depth / 2.0
     cx = sum(x for x, _ in outline) / len(outline)
     cy = sum(y for _, y in outline) / len(outline)
-    positions, normals, uvs, indices = [], [], [], []
+    positions: list[tuple[float, float, float]] = []
+    normals: list[tuple[float, float, float]] = []
+    uvs: list[tuple[float, float]] = []
+    indices: list[int] = []
 
     for z, normal, flip in ((front, (0.0, 0.0, 1.0), False), (back, (0.0, 0.0, -1.0), True)):
         centre = len(positions)
@@ -288,7 +294,10 @@ def oval_mesh(
     def place(px: float, py: float) -> tuple[float, float, float]:
         return (px * cos_r - py * sin_r, px * sin_r + py * cos_r, 0.0)
 
-    positions, normals, uvs, indices = [place(cx, cy)], [(0.0, 0.0, 1.0)], [(0.5, 0.5)], []
+    positions: list[tuple[float, float, float]] = [place(cx, cy)]
+    normals: list[tuple[float, float, float]] = [(0.0, 0.0, 1.0)]
+    uvs: list[tuple[float, float]] = [(0.5, 0.5)]
+    indices: list[int] = []
     for segment in range(segments + 1):
         angle = 2.0 * math.pi * segment / segments
         positions.append(place(cx + rx * math.cos(angle), cy + ry * math.sin(angle)))

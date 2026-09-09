@@ -83,7 +83,7 @@ def lag(rate: float, dt: float) -> float:
     per_frame = min(1.0, rate / k.TUNED_HZ)
     if per_frame >= 1.0:
         return 1.0
-    return 1.0 - (1.0 - per_frame) ** (k.TUNED_HZ * dt)
+    return float(1.0 - (1.0 - per_frame) ** (k.TUNED_HZ * dt))
 
 
 class Fly:

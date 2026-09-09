@@ -201,7 +201,7 @@ class BrainWindow:
 
     # -- interaction --------------------------------------------------------
 
-    def _handle_press(self, _area: Gtk.GLArea, event: object) -> bool:
+    def _handle_press(self, _area: Gtk.GLArea, event: Gdk.EventButton) -> bool:
         self._drag_from = (event.x, event.y)
         if event.type != Gdk.EventType._2BUTTON_PRESS:
             self._drag_travel = 0.0
@@ -209,7 +209,7 @@ class BrainWindow:
             self._double_click = True
         return True
 
-    def _handle_drag(self, _area: Gtk.GLArea, event: object) -> bool:
+    def _handle_drag(self, _area: Gtk.GLArea, event: Gdk.EventMotion) -> bool:
         if self._drag_from is None:
             return True
         dx, dy = event.x - self._drag_from[0], event.y - self._drag_from[1]
@@ -218,7 +218,7 @@ class BrainWindow:
         self.renderer.orbit(dx, dy)
         return True
 
-    def _handle_release(self, area: Gtk.GLArea, event: object) -> bool:
+    def _handle_release(self, area: Gtk.GLArea, event: Gdk.EventButton) -> bool:
         travelled, doubled = self._drag_travel, self._double_click
         self._drag_from, self._double_click = None, False
         if travelled >= DRAG_THRESHOLD_PX:
@@ -236,7 +236,7 @@ class BrainWindow:
             self._show_label(name)
         return True
 
-    def _handle_scroll(self, _area: Gtk.GLArea, event: object) -> bool:
+    def _handle_scroll(self, _area: Gtk.GLArea, event: Gdk.EventScroll) -> bool:
         if event.direction == Gdk.ScrollDirection.SMOOTH:
             found, _dx, dy = event.get_scroll_deltas()
             if found:

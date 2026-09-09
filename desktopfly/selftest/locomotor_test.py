@@ -390,10 +390,17 @@ def run(seed: int | None = None) -> int:
         )
 
     def steering_turns_the_body() -> tuple[bool, str]:
-        common = {"forward_hz": 30.0, "onset": SETTLED_S, "duration": 10.0}
-        straight = evaluate_locomotor(data, **common)
-        left = evaluate_locomotor(data, left_hz=70.0, **common)
-        right = evaluate_locomotor(data, right_hz=70.0, **common)
+        def steer(left_hz: float = 0.0, right_hz: float = 0.0) -> LocomotorTrial:
+            return evaluate_locomotor(
+                data,
+                forward_hz=30.0,
+                left_hz=left_hz,
+                right_hz=right_hz,
+                onset=SETTLED_S,
+                duration=10.0,
+            )
+
+        straight, left, right = steer(), steer(left_hz=70.0), steer(right_hz=70.0)
         return (
             left.late_yaw - straight.late_yaw > 0.10
             and right.late_yaw - straight.late_yaw < -0.10,
@@ -540,7 +547,15 @@ def run(seed: int | None = None) -> int:
 
     def ledge_endpoint() -> tuple[bool, str]:
         """Reverse at the end of an edge, and drop when that edge is dragged away."""
-        state = {"reversed": False, "took_off": False, "shift": 0.0, "before": (0.0, 0.0)}
+
+        @dataclass
+        class _Dragged:
+            reversed_at_end: bool = False
+            took_off: bool = False
+            shift: float = 0.0
+            before: tuple[float, float] = (0.0, 0.0)
+
+        state = _Dragged()
 
         def place(fly: Fly) -> None:
             fly.terrain = [Ledge(y=0.0, x0=-40.0, x1=40.0, key=42)]
@@ -549,15 +564,15 @@ def run(seed: int | None = None) -> int:
 
         def watch(tick: int, fly: Fly) -> None:
             if tick == 60:
-                state["reversed"] = fly.state is State.WALKING and (
+                state.reversed_at_end = fly.state is State.WALKING and (
                     abs(angle_difference(0.0, fly.heading)) > 0.5
                 )
-                state["before"] = (fly.x, fly.y)
+                state.before = (fly.x, fly.y)
                 # Same edge, same height, dragged 400 units to the right.
                 fly.terrain = [Ledge(y=0.0, x0=360.0, x1=440.0, key=42)]
-            elif tick > 60 and not state["took_off"] and fly.state is State.FLYING:
-                state["took_off"] = True
-                state["shift"] = math.dist((fly.x, fly.y), state["before"])
+            elif tick > 60 and not state.took_off and fly.state is State.FLYING:
+                state.took_off = True
+                state.shift = math.dist((fly.x, fly.y), state.before)
 
         ok, detail = transition_check(
             data,
@@ -567,11 +582,11 @@ def run(seed: int | None = None) -> int:
             setup=place,
             at_tick=watch,
         )
-        moved_support = state["took_off"] and state["shift"] < 1.0
-        return ok and bool(state["reversed"]) and moved_support, (
-            f"{detail}; reversed at the end={state['reversed']}, "
-            f"took off when dragged={state['took_off']} "
-            f"after moving {state['shift']:.3f} units"
+        moved_support = state.took_off and state.shift < 1.0
+        return ok and state.reversed_at_end and moved_support, (
+            f"{detail}; reversed at the end={state.reversed_at_end}, "
+            f"took off when dragged={state.took_off} "
+            f"after moving {state.shift:.3f} units"
         )
 
     checks += [
