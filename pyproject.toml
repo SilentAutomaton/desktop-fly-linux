@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "desktop-fly-linux"
-version = "0.1.0"
+version = "0.2.0"
 description = "A connectome-driven 3D fruit fly on the Linux desktop (Wayland/X11 fork of DesktopFly)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -40,6 +40,9 @@ packages = ["desktopfly", "desktopfly.render", "desktopfly.platform", "desktopfl
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# The two ETL scripts are vendored upstream byte-for-byte. Linting a file
+# nobody is allowed to edit only produces noise.
+extend-exclude = ["etl.py", "etl_malecns.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RET", "TID"]

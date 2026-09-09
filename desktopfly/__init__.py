@@ -4,4 +4,4 @@ Linux fork of DesktopFly by Denis Shiryaev:
 https://github.com/DenisSergeevitch/desktop-fly
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
