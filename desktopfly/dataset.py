@@ -1,7 +1,9 @@
-"""Loading the shipped FlyWire data files.
+"""Loading the shipped connectome data files.
 
 Port of Sim.swift findDataDir / loadBrainData. The files themselves are
-upstream's, byte-identical, and are CC BY-NC 4.0 — see data/DATA_LICENSE.md.
+upstream's, byte-identical, and carry two different licences: the FlyWire brain
+files are CC BY-NC 4.0 and the MaleCNS nerve-cord file is CC BY 4.0. See
+data/DATA_LICENSE.md and data/LOCOMOTOR_PROVENANCE.md.
 """
 
 from __future__ import annotations
@@ -16,6 +18,22 @@ import numpy.typing as npt
 
 BRAIN_POINTS_FILE = "brain_points.json"
 CIRCUIT_FILE = "circuit.json"
+LOCOMOTOR_FILE = "locomotor_circuit.json"
+
+# The order the six legs appear in throughout the data, the simulation and the
+# body: right and left front, middle, hind. Written down because a leg index is
+# meaningless without it.
+LEG_ORDER = ("RF", "LF", "RM", "LM", "RH", "LH")
+LEG_COUNT = len(LEG_ORDER)
+
+# The four antagonist channels every leg must have for the circuit to be able to
+# drive a step at all. validate() refuses a file that is missing any of them.
+REQUIRED_MOTOR_CHANNELS = (
+    "tibia_flexor",
+    "tibia_extensor",
+    "trochanter_flexor",
+    "trochanter_extensor",
+)
 
 
 @dataclass(frozen=True)
@@ -40,6 +58,59 @@ class CircuitNeuron:
 class Circuit:
     neurons: list[CircuitNeuron]
     edges: npt.NDArray[np.float32]  # (m, 3): pre index, post index, signed synapse count
+
+
+@dataclass(frozen=True)
+class LocomotorNeuron:
+    """One MaleCNS nerve-cord neuron. Port of Sim.swift LocomotorNeuronFile.
+
+    The shipped file carries far more per neuron - source annotations, soma
+    coordinates, transmitter predictions and their confidences - so that a
+    different physiological model can be built on the same extraction. The
+    simulation reads only these fields, exactly as upstream does.
+    """
+
+    id: str  # MaleCNS body id
+    type: str  # cell type, e.g. DNp09
+    role: str  # descending | premotor | motor | sensory | ascending
+    side: str  # left | right | center | unknown
+    leg: int | None  # index into LEG_ORDER, or None for cells with no leg
+    motor_channel: str | None  # named muscle action, motor cells only
+    sensory_kind: str | None  # chordotonal | campaniform | hair_plate | ...
+
+
+@dataclass(frozen=True)
+class LocomotorCircuit:
+    neurons: list[LocomotorNeuron]
+    edges: npt.NDArray[np.float32]  # (m, 3): pre index, post index, signed contact count
+
+    def validate(self) -> bool:
+        """Port of Sim.swift LocomotorCircuitFile.validate.
+
+        A malformed file must be refused rather than half-loaded: the fly
+        degrades to the scripted gait, which is a supported state, whereas a
+        circuit missing one antagonist channel would silently produce a leg that
+        can flex and never extend.
+        """
+        if not self.neurons or len(self.edges) == 0:
+            return False
+        if len({n.id for n in self.neurons}) != len(self.neurons):
+            return False
+        if any(n.leg is not None and not 0 <= n.leg < LEG_COUNT for n in self.neurons):
+            return False
+        if self.edges.shape[1] != 3 or not np.isfinite(self.edges).all():
+            return False
+        index = self.edges[:, :2]
+        if (index < 0).any() or (index >= len(self.neurons)).any():
+            return False
+        if (index != np.rint(index)).any():
+            return False
+        channels = {(n.leg, n.motor_channel) for n in self.neurons}
+        return all(
+            (leg, channel) in channels
+            for leg in range(LEG_COUNT)
+            for channel in REQUIRED_MOTOR_CHANNELS
+        )
 
 
 def data_dir_candidates() -> list[Path]:
@@ -96,18 +167,52 @@ def load_circuit(path: Path) -> Circuit:
     return Circuit(neurons=neurons, edges=np.asarray(raw["edges"], dtype=np.float32))
 
 
+def load_locomotor(path: Path) -> LocomotorCircuit | None:
+    """The MaleCNS nerve cord, or None if it is absent or malformed.
+
+    Returning None is a supported state, not an error: the fly falls back to the
+    scripted gait and the sinusoidal proprioceptive drive it used before v1.1.0.
+    """
+    file = path / LOCOMOTOR_FILE
+    if not file.is_file():
+        return None
+    raw = json.loads(file.read_text())
+    circuit = LocomotorCircuit(
+        neurons=[
+            LocomotorNeuron(
+                id=n["id"],
+                type=n["type"],
+                role=n["role"],
+                side=n["side"],
+                leg=n["leg"],
+                motor_channel=n["motorChannel"],
+                sensory_kind=n["sensoryKind"],
+            )
+            for n in raw["neurons"]
+        ],
+        edges=np.asarray(raw["edges"], dtype=np.float32),
+    )
+    return circuit if circuit.validate() else None
+
+
 @dataclass(frozen=True)
 class BrainData:
     directory: Path
     points: BrainPoints
     circuit: Circuit
+    locomotor: LocomotorCircuit | None
 
     def describe(self) -> str:
         """The provenance line shown in the tray menu, as upstream shows it."""
-        return (
+        line = (
             f"FlyWire v783 · {len(self.points.positions)} somas · "
             f"circuit {len(self.circuit.neurons)}n/{len(self.circuit.edges)}e"
         )
+        if self.locomotor is not None:
+            line += (
+                f" · MaleCNS {len(self.locomotor.neurons)}n/{len(self.locomotor.edges)}e"
+            )
+        return line
 
 
 def load_brain_data() -> BrainData | None:
@@ -123,4 +228,5 @@ def load_brain_data() -> BrainData | None:
         directory=directory,
         points=load_brain_points(directory),
         circuit=load_circuit(directory),
+        locomotor=load_locomotor(directory),
     )
