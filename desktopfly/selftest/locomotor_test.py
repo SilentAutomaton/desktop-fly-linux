@@ -21,12 +21,16 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+import numpy as np
+
 from desktopfly import constants as k
-from desktopfly.behavior import Fly, State
+from desktopfly.behavior import Fly, State, angle_difference
 from desktopfly.dataset import LEG_COUNT, BrainData, load_brain_data
+from desktopfly.environment import Ledge
 from desktopfly.geometry import build_fly_model
 from desktopfly.legdynamics import LegMotorCommand, SixLegDynamics
 from desktopfly.locomotor import LocomotorSim
+from desktopfly.scenegraph import Mat3
 from desktopfly.selftest import DEFAULT_SEED
 from desktopfly.signals import SignalBuilder
 from desktopfly.sim import BrainSignals, LIFSim
@@ -34,6 +38,14 @@ from desktopfly.sim import BrainSignals, LIFSim
 BOUNDS = (1512.0, 982.0)
 TICK = k.SIMULATION_TICK_S
 SETTLED_S = 3.0  # everything before this is the model getting going
+
+# Per-tick ceilings for the transition fixtures. Before the easing went in, a
+# state change moved a toe 11.4 units and flipped the heading by pi in one tick.
+JOINT_JUMP_LIMIT = 0.35  # rad
+TOE_JUMP_LIMIT = 3.0  # units
+HEADING_JUMP_LIMIT = 0.18  # rad
+PITCH_JUMP_LIMIT = 0.08  # rad
+WARMUP_TICKS = 360  # of real motor walking, never a reset pose
 
 
 @dataclass
@@ -140,6 +152,27 @@ def evaluate_locomotor(
     return trial
 
 
+def _joint_rotations(fly: Fly) -> list[Mat3]:
+    return [
+        node._rotation_matrix()
+        for leg in fly.model.legs
+        for node in (leg.root, leg.knee, leg.ankle)
+    ]
+
+
+def _toes(fly: Fly) -> list[np.ndarray]:
+    toes = []
+    for leg in fly.model.legs:
+        chain = leg.root.local_matrix() @ leg.knee.local_matrix() @ leg.ankle.local_matrix()
+        toes.append(chain @ np.array([leg.geometry.tarsus, 0.0, 0.0, 1.0], dtype=np.float32))
+    return toes
+
+
+def _rotation_angle(before: Mat3, after: Mat3) -> float:
+    cosine = (float(np.trace(before.T @ after)) - 1.0) / 2.0
+    return math.acos(min(1.0, max(-1.0, cosine)))
+
+
 class _Report:
     def __init__(self) -> None:
         self.failures = 0
@@ -188,6 +221,101 @@ def _drive_chain(
             previous = [f.contact for f in state]
         last = (fly.x, fly.y)
     return fly, path, contacts
+
+
+@dataclass
+class _Phase:
+    """One stretch of a transition fixture: how long, and what the brain says."""
+
+    ticks: int
+    walk: float = 0.0
+    groom: float = 0.0
+    sleep: bool = False
+
+
+def transition_check(
+    data: BrainData,
+    seed: int,
+    phases: list[_Phase],
+    expected: list[str],
+    setup: Callable[[Fly], None] | None = None,
+    first_signals: Callable[[BrainSignals], None] | None = None,
+    at_tick: Callable[[int, Fly], None] | None = None,
+) -> tuple[bool, str]:
+    """Walk the fly for real, then change its behaviour and watch for a jump.
+
+    The warm-up is real motor walking rather than a reset pose, because the
+    thing being tested is the handover out of one and into another.
+    """
+    sim = LIFSim(data.circuit, seed=seed, locomotor_circuit=data.locomotor)
+    builder = SignalBuilder()
+    fly = Fly((0.0, 0.0))
+    fly.state = State.WALKING
+    sim.stimulate(sim.groups.forward, 0.15, 20_000)
+
+    def signals(frame: int, walk: float, groom: float, sleep: bool) -> BrainSignals:
+        sim.leg_feedback = fly.leg_feedback
+        sim.step(9 if frame % 3 == 2 else 8)
+        value = builder.make(sim, TICK)
+        value.escape = False
+        value.nervous = 0.0
+        value.arousal = 0.0
+        value.walk_drive = walk
+        value.groom_drive = groom
+        value.sleep = sleep
+        return value
+
+    for frame in range(WARMUP_TICKS):
+        fly.update(TICK, BOUNDS, None, signals(frame, 1.0, 0.0, False))
+    if setup is not None:
+        setup(fly)
+
+    seen = [fly.state.value]
+    worst_joint = worst_toe = worst_heading = worst_pitch = 0.0
+    frame = WARMUP_TICKS
+    first = True
+    for phase in phases:
+        for _ in range(phase.ticks):
+            before_joints = _joint_rotations(fly)
+            before_toes = _toes(fly)
+            before_heading, before_pitch = fly.heading, fly.pitch
+
+            value = signals(frame, phase.walk, phase.groom, phase.sleep)
+            if first and first_signals is not None:
+                first_signals(value)
+            first = False
+            mouse = (fly.x + 180.0 * math.cos(fly.heading), fly.y + 180.0 * math.sin(fly.heading))
+            fly.update(TICK, BOUNDS, mouse if value.escape or value.nervous else None, value)
+            if at_tick is not None:
+                at_tick(frame - WARMUP_TICKS, fly)
+
+            for was, now in zip(before_joints, _joint_rotations(fly), strict=True):
+                worst_joint = max(worst_joint, _rotation_angle(was, now))
+            for was, now in zip(before_toes, _toes(fly), strict=True):
+                worst_toe = max(worst_toe, float(np.linalg.norm(now - was)))
+            worst_heading = max(worst_heading, abs(angle_difference(before_heading, fly.heading)))
+            worst_pitch = max(worst_pitch, abs(fly.pitch - before_pitch))
+            if fly.state.value != seen[-1]:
+                seen.append(fly.state.value)
+            frame += 1
+
+    # `expected` is a subsequence: the fixture cares that those states happened
+    # in that order, not that nothing else did.
+    remaining = list(expected)
+    for state in seen:
+        if remaining and state == remaining[0]:
+            remaining.pop(0)
+    smooth = (
+        worst_joint < JOINT_JUMP_LIMIT
+        and worst_toe < TOE_JUMP_LIMIT
+        and worst_heading < HEADING_JUMP_LIMIT
+        and worst_pitch < PITCH_JUMP_LIMIT
+    )
+    return not remaining and smooth, (
+        f"states {' -> '.join(seen)}; per tick max joint {worst_joint:.3f} rad, "
+        f"toe {worst_toe:.3f} units, heading {worst_heading:.3f} rad, "
+        f"pitch {worst_pitch:.3f} rad"
+    )
 
 
 def run(seed: int | None = None) -> int:
@@ -368,6 +496,90 @@ def run(seed: int | None = None) -> int:
         ("legacy speed and turning cannot bypass motor silence", silence_cannot_be_bypassed),
         ("rendered toes agree with physical feedback", rendered_toes_match_physics),
         ("thermal tempo reaches active motor mechanics", tempo_reaches_the_mechanics),
+    ]
+
+    def groom_and_resume() -> tuple[bool, str]:
+        return transition_check(
+            data,
+            seed,
+            [_Phase(120, groom=1.0), _Phase(240, walk=1.0)],
+            ["walking", "grooming", "idle", "walking"],
+        )
+
+    def sleep_and_wake() -> tuple[bool, str]:
+        return transition_check(
+            data,
+            seed,
+            [_Phase(120), _Phase(120, sleep=True), _Phase(240, walk=1.0)],
+            ["walking", "idle", "sleeping", "grooming", "idle", "walking"],
+        )
+
+    def flight_and_landing() -> tuple[bool, str]:
+        def escape(value: BrainSignals) -> None:
+            value.escape = True
+
+        return transition_check(
+            data,
+            seed,
+            [_Phase(480), _Phase(180, walk=1.0)],
+            ["walking", "flying", "idle", "walking"],
+            first_signals=escape,
+        )
+
+    def nervous_turn() -> tuple[bool, str]:
+        def startle(value: BrainSignals) -> None:
+            value.nervous = 0.9
+
+        return transition_check(
+            data,
+            seed,
+            [_Phase(120, walk=1.0)],
+            ["walking"],
+            first_signals=startle,
+        )
+
+    def ledge_endpoint() -> tuple[bool, str]:
+        """Reverse at the end of an edge, and drop when that edge is dragged away."""
+        state = {"reversed": False, "took_off": False, "shift": 0.0, "before": (0.0, 0.0)}
+
+        def place(fly: Fly) -> None:
+            fly.terrain = [Ledge(y=0.0, x0=-40.0, x1=40.0, key=42)]
+            fly.ledge = fly.terrain[0]
+            fly.x, fly.y, fly.heading = 39.0, 0.0, 0.0
+
+        def watch(tick: int, fly: Fly) -> None:
+            if tick == 60:
+                state["reversed"] = fly.state is State.WALKING and (
+                    abs(angle_difference(0.0, fly.heading)) > 0.5
+                )
+                state["before"] = (fly.x, fly.y)
+                # Same edge, same height, dragged 400 units to the right.
+                fly.terrain = [Ledge(y=0.0, x0=360.0, x1=440.0, key=42)]
+            elif tick > 60 and not state["took_off"] and fly.state is State.FLYING:
+                state["took_off"] = True
+                state["shift"] = math.dist((fly.x, fly.y), state["before"])
+
+        ok, detail = transition_check(
+            data,
+            seed,
+            [_Phase(120, walk=1.0)],
+            ["walking", "flying"],
+            setup=place,
+            at_tick=watch,
+        )
+        moved_support = state["took_off"] and state["shift"] < 1.0
+        return ok and bool(state["reversed"]) and moved_support, (
+            f"{detail}; reversed at the end={state['reversed']}, "
+            f"took off when dragged={state['took_off']} "
+            f"after moving {state['shift']:.3f} units"
+        )
+
+    checks += [
+        ("transition: groom and resume", groom_and_resume),
+        ("transition: idle, sleep and wake", sleep_and_wake),
+        ("transition: flight and landing", flight_and_landing),
+        ("transition: nervous turn", nervous_turn),
+        ("transition: ledge endpoint and dragged support", ledge_endpoint),
     ]
     for name, run_check in checks:
         check(name, run_check)

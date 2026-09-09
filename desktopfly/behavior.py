@@ -21,10 +21,14 @@ from .environment import Ledge
 from .geometry import FlyModel, build_fly_model
 from .legdynamics import (
     CONTACT_HEIGHT,
+    ELEVATION_RANGE,
+    HIP_LIMIT,
+    REST_KNEE,
     LegBodyMotion,
     LegFeedback,
     LegMotorCommand,
     SixLegDynamics,
+    ground_elevation,
 )
 from .scenegraph import Node
 from .sim import BrainSignals
@@ -92,6 +96,18 @@ class Fly:
         # until the first frame has sampled it.
         self._sensed_leg_feedback: list[LegFeedback] = []
         self._motor_walking = False
+        # Which pose the renderer last showed, so an interrupted transition
+        # retargets from what is on screen instead of restarting from rest.
+        self._rendered_leg_state: State | None = None
+        self._rendered_motor_control = False
+        self._leg_blend_from: list[LegFeedback] = []
+        self._leg_blend_time = 0.0
+        # A heading the body is turning towards, and how long it stays valid.
+        self._turn_target: float | None = None
+        self._turn_target_time = 0.0
+        self._turn_velocity = 0.0
+        self._ledge_heading: float | None = None
+        self._wing_flight_amount = 0.0
         self.x, self.y = position
         self.heading = random.uniform(0.0, 2 * math.pi)
         self.speed = 30.0
@@ -172,6 +188,9 @@ class Fly:
         self.backward_timer = max(0.0, self.backward_timer - dt)
         self.state_age += dt
         self.dart_timer = max(0.0, self.dart_timer - dt)
+        self._turn_target_time = max(0.0, self._turn_target_time - dt)
+        if self._turn_target_time == 0:
+            self._turn_target = None
 
         # Live brain drives reach the wings even in mid-flight.
         self._brain_live = signals is not None
@@ -288,6 +307,8 @@ class Fly:
             return
         self.state = state
         self.state_age = 0.0
+        if state is not State.WALKING:
+            self._turn_target = None
 
     # -- connectome-driven behaviour ----------------------------------------
 
@@ -321,14 +342,15 @@ class Fly:
             self.ledge = None
             self._set_state(State.WALKING)
             if mouse is not None:
-                self.saccade = 0.0  # fleeing turns are instant, not saccadic
-                self.heading = math.atan2(self.y - mouse[1], self.x - mouse[0]) + random.uniform(
-                    -0.4, 0.4
-                )
+                self.saccade = 0.0
+                self._turn_target = math.atan2(
+                    self.y - mouse[1], self.x - mouse[0]
+                ) + random.uniform(-0.4, 0.4)
             else:
                 self._start_saccade()
             self.speed = random.uniform(*k.DART_SPEED)
             self.dart_timer = random.uniform(*k.DART_DURATION_S)
+            self._turn_target_time = self.dart_timer
             self.dart_cooldown = k.DART_COOLDOWN_S
 
         # DNg11, the grooming command, with hysteresis on both edges.
@@ -404,12 +426,13 @@ class Fly:
                 self.start_flight(bounds, away_from=mouse)
             elif distance < k.NERVOUS_RADIUS and self.state is not State.WALKING:
                 self._set_state(State.WALKING)
-                self.saccade = 0.0  # fleeing turns are instant, not saccadic
-                self.heading = math.atan2(self.y - mouse[1], self.x - mouse[0]) + random.uniform(
-                    -0.4, 0.4
-                )
+                self.saccade = 0.0
+                self._turn_target = math.atan2(
+                    self.y - mouse[1], self.x - mouse[0]
+                ) + random.uniform(-0.4, 0.4)
                 self.speed = random.uniform(110.0, 150.0)
                 self.state_timer = random.uniform(0.4, 0.9)
+                self._turn_target_time = self.state_timer
                 self.scare_cooldown = 1.0
         if self.state is State.FLYING:
             return
@@ -465,23 +488,30 @@ class Fly:
             # the edge height; the window may be moving under its feet.
             if motor_motion is None:
                 self.heading += random.uniform(-1.0, 1.0) * k.LEDGE_JITTER * math.sqrt(dt)
-            along = 0.0 if math.cos(self.heading) >= 0 else math.pi
-            self.heading += angle_difference(self.heading, along) * lag(
-                k.LEDGE_ALIGN_LERP, dt
-            )
+            # Which way along the edge it is going is latched and turned into,
+            # rather than recomputed and assigned: reaching the end used to flip
+            # the heading by pi within one tick.
+            if self._ledge_heading is None:
+                self._ledge_heading = 0.0 if math.cos(self.heading) >= 0 else math.pi
+            if self.x <= ledge.x0 + k.LEDGE_END_MARGIN:
+                self._ledge_heading = 0.0
+            if self.x >= ledge.x1 - k.LEDGE_END_MARGIN:
+                self._ledge_heading = math.pi
+            self._turn_toward(self._ledge_heading, dt)
             along_edge = (
                 motor_motion.forward if motor_motion is not None else self._effective_speed * dt
             )
             self.x += math.cos(self.heading) * along_edge
             self.y += (ledge.y - self.y) * lag(k.LEDGE_SNAP_LERP, dt)
-            if self.x <= ledge.x0 + k.LEDGE_END_MARGIN and math.cos(self.heading) < 0:
-                self.heading = 0.0
-            if self.x >= ledge.x1 - k.LEDGE_END_MARGIN and math.cos(self.heading) > 0:
-                self.heading = math.pi
             self.x = clamp(self.x, ledge.x0, ledge.x1)
             if random.random() < lag(k.LEDGE_LEAVE_CHANCE, dt):
                 self.ledge = None
         else:
+            self._ledge_heading = None
+            if self._turn_target is not None:
+                self._turn_toward(self._turn_target, dt)
+                if abs(angle_difference(self.heading, self._turn_target)) < 0.001:
+                    self._turn_target = None
             start_heading = self.heading
             if motor_motion is not None:
                 self.heading += motor_motion.yaw
@@ -518,10 +548,19 @@ class Fly:
         """Follow the window this edge belongs to; take off if it vanished.
 
         Returns False when the fly left the ground, so the caller stops walking.
+
+        The fly has to still be over the edge for it to count as the same
+        ground. Matching on height alone re-latched onto a window dragged
+        sideways, and the clamp below then teleported the fly across the screen
+        to catch up with it.
         """
         assert self.ledge is not None
         current = next((L for L in self.terrain if L.key == self.ledge.key), None)
-        if current is not None and abs(current.y - self.ledge.y) < k.LEDGE_LOST_DISTANCE:
+        if (
+            current is not None
+            and abs(current.y - self.ledge.y) < k.LEDGE_LOST_DISTANCE
+            and current.x0 - k.LEDGE_END_MARGIN <= self.x <= current.x1 + k.LEDGE_END_MARGIN
+        ):
             self.ledge = current
             return True
         self.ledge = None
@@ -534,7 +573,7 @@ class Fly:
             near_y = abs(self.y - ledge.y) < k.LEDGE_ATTACH_DISTANCE
             if near_x and near_y and random.random() < lag(k.LEDGE_ATTACH_CHANCE, dt):
                 self.ledge = ledge
-                self.heading = 0.0 if math.cos(self.heading) >= 0 else math.pi
+                self._ledge_heading = 0.0 if math.cos(self.heading) >= 0 else math.pi
                 return
 
     # -- flight -------------------------------------------------------------
@@ -546,8 +585,10 @@ class Fly:
         escape: bool = False,
         effort: float | None = None,
     ) -> None:
-        self.state = State.FLYING
+        self._set_state(State.FLYING)
         self.ledge = None
+        self._ledge_heading = None
+        self._turn_target = None
         self.saccade = 0.0
         chosen_effort = (
             effort
@@ -556,8 +597,8 @@ class Fly:
         )
         self.flight_effort = clamp(chosen_effort, *k.FLIGHT_EFFORT_RANGE)
         self.effort_current = self.flight_effort
-        self.flap_phase = 0.0
-        self.wing_raise = 0.0
+        # The stroke and the threat posture carry on from wherever they were.
+        # Zeroing them here made the wings jump at every takeoff.
         self.flight_from = (self.x, self.y)
 
         width, height = bounds
@@ -614,12 +655,34 @@ class Fly:
         self.model.blur_wing_left.hidden = False
         self.model.blur_wing_right.hidden = False
 
-    def _start_saccade(self) -> None:
-        """Queue a body saccade instead of snapping the heading.
+    def _turn_toward(self, target: float, dt: float) -> None:
+        """Turn the body towards a heading at a bounded rate.
 
-        Escape turns do NOT go through this: a fleeing fly extends its legs in
-        3.33 ms (Card & Dickinson 2008, J Exp Biol 211:341), so rate-limiting a
-        turn away from the cursor would be a regression, not a fix.
+        Fast reactions used to assign the heading outright, which rotated the
+        whole animal inside one tick. This still gets there quickly - the gain
+        is high - but it gets there by turning.
+        """
+        error = angle_difference(self.heading, target)
+        desired = clamp(error * k.TURN_GAIN, -k.TURN_RATE_LIMIT, k.TURN_RATE_LIMIT)
+        self._turn_velocity += clamp(
+            desired - self._turn_velocity,
+            -k.TURN_ACCELERATION_LIMIT * dt,
+            k.TURN_ACCELERATION_LIMIT * dt,
+        )
+        step = self._turn_velocity * dt
+        if step * error >= 0 and abs(step) >= abs(error):
+            self.heading += error
+            self._turn_velocity = 0.0
+        else:
+            self.heading += step
+
+    def _start_saccade(self) -> None:
+        """Queue a small spontaneous body saccade.
+
+        Larger changes of direction go through _turn_toward instead, so a fast
+        reaction does not rotate the entire animal in one tick. The escape
+        reflex itself stays quick either way: a fleeing fly extends its legs in
+        3.33 ms (Card & Dickinson 2008, J Exp Biol 211:341).
         """
         sign = -1.0 if random.random() < 0.5 else 1.0
         self.saccade = sign * random.uniform(*k.SACCADE_AMPLITUDE)
@@ -637,18 +700,14 @@ class Fly:
             self.saccade -= step
 
     def _land(self) -> None:
-        self.state = State.IDLE
+        self._set_state(State.IDLE)
         self.state_timer = random.uniform(0.3, 0.8)
         self.speed = 0.0
         self.altitude = 0.0
         self.pitch = 0.0
         self.node.scale = [k.FLY_SCALE, k.FLY_SCALE, k.FLY_SCALE]
         self.node.position[2] = 0.0
-        for index, wing in enumerate(self.model.folded_wings.children):
-            side = -1.0 if index == 0 else 1.0
-            wing.euler = [0.0, 0.0, side * 0.13]
-        self.model.blur_wing_left.hidden = True
-        self.model.blur_wing_right.hidden = True
+        # Wing closure and leg settling continue from their airborne poses.
 
     def _apply_altitude(self) -> None:
         # Higher means nearer the viewer, so bigger.
@@ -661,9 +720,12 @@ class Fly:
         if self.flight_t >= 1.0:
             # Touchdown flare: the timer ran out, but the fly only lands once it
             # has actually descended. Never snap the scale or the height.
-            self.x = self.flight_to[0] + math.sin(self.time * 26) * 1.2
-            self.y = self.flight_to[1] + math.cos(self.time * 22) * 1.0
-            self.pitch = clamp(self.altitude * 0.4, 0.0, k.FLARE_PITCH_LIMIT)
+            settle = min(1.0, self.altitude / k.FLARE_SETTLE_ALTITUDE)
+            self.x = self.flight_to[0] + math.sin(self.time * 26) * 1.2 * settle
+            self.y = self.flight_to[1] + math.cos(self.time * 22) * settle
+            self.pitch += (
+                clamp(self.altitude * 0.4, 0.0, k.FLARE_PITCH_LIMIT) - self.pitch
+            ) * lag(k.PITCH_LERP, dt)
             self.altitude += (0.0 - self.altitude) * lag(k.FLARE_ALTITUDE_LERP, dt)
             self._apply_altitude()
             if self.altitude < k.LANDING_ALTITUDE:
@@ -678,7 +740,7 @@ class Fly:
         wobble = math.sin(self.time * 32) * 4 * math.sin(self.flight_t * math.pi)
         self.x = self.flight_from[0] + dx * eased + (-dy / length) * wobble
         self.y = self.flight_from[1] + dy * eased + (dx / length) * wobble
-        self.heading = math.atan2(dy, dx) + math.sin(self.time * 18) * 0.12
+        self._turn_toward(math.atan2(dy, dx) + math.sin(self.time * 18) * 0.12, dt)
 
         # Effort stays live: ongoing escape-DN and arousal activity make it beat
         # harder mid-flight. The max() is load-bearing - a live modifier must
@@ -698,11 +760,14 @@ class Fly:
         rise = min(self.flight_t / k.FLIGHT_RISE_FRACTION, 1.0)
         fall = min((1 - self.flight_t) / k.FLIGHT_FALL_FRACTION, 1.0)
         target = self.effort_current * min(rise, fall) * (0.85 + 0.15 * math.sin(self.time * 7))
-        self.pitch = clamp(
-            (target - self.altitude) * k.FLIGHT_PITCH_GAIN,
-            -k.FLIGHT_PITCH_LIMIT,
-            k.FLIGHT_PITCH_LIMIT,
-        )
+        self.pitch += (
+            clamp(
+                (target - self.altitude) * k.FLIGHT_PITCH_GAIN,
+                -k.FLIGHT_PITCH_LIMIT,
+                k.FLIGHT_PITCH_LIMIT,
+            )
+            - self.pitch
+        ) * lag(k.PITCH_LERP, dt)
         self.altitude += (target - self.altitude) * lag(k.FLIGHT_ALTITUDE_LERP, dt)
         self._apply_altitude()
 
@@ -712,79 +777,118 @@ class Fly:
         if self._motor_walking:
             for leg, feedback in zip(self.model.legs, self.leg_dynamics.feedback, strict=True):
                 leg.apply_feedback(feedback)
+            self._rendered_leg_state = self.state
+            self._rendered_motor_control = True
             return
+
+        # Retarget from the pose on screen, including when one transition
+        # interrupts another. Under motor control the physics adopts that same
+        # pose instead, which is what keeps the two paths agreeing.
+        if self._rendered_leg_state is not self.state or self._rendered_motor_control:
+            self._leg_blend_from = [leg.pose() for leg in self.model.legs]
+            self._leg_blend_time = 0.0
+        self._rendered_leg_state = self.state
+        self._rendered_motor_control = False
+        self._leg_blend_time = min(k.LEG_BLEND_S, self._leg_blend_time + dt)
+        blend = smoothstep(self._leg_blend_time / k.LEG_BLEND_S)
+
         speed = abs(self._effective_speed)
-        if self.state is State.WALKING and speed > 1:
-            amplitude = clamp(
-                k.GAIT_AMPLITUDE[0] + speed * k.GAIT_AMPLITUDE_PER_SPEED, *k.GAIT_AMPLITUDE
-            )
-            stride = max(5.0, 2 * amplitude * 13)
-            frequency = clamp(speed / stride, *k.GAIT_FREQUENCY)
+        walking = self.state is State.WALKING and speed > 1
+        amplitude = clamp(
+            k.GAIT_AMPLITUDE[0] + speed * k.GAIT_AMPLITUDE_PER_SPEED, *k.GAIT_AMPLITUDE
+        )
+        stride = max(5.0, 2 * amplitude * 13)
+        frequency = clamp(speed / stride, *k.GAIT_FREQUENCY)
+        if walking:
             self.gait_phase = math.fmod(self.gait_phase + frequency * dt, 1.0)
-            stance = clamp(1 - k.SWING_DURATION_S * frequency, *k.GAIT_STANCE_LIMITS)
-            for leg in self.model.legs:
+        stance = clamp(1 - k.SWING_DURATION_S * frequency, *k.GAIT_STANCE_LIMITS)
+
+        for index, leg in enumerate(self.model.legs):
+            angle, lift, knee = 0.0, 0.0, REST_KNEE
+            if walking:
+                knee = k.GAIT_KNEE_ANGLE
                 phase = math.fmod(self.gait_phase + leg.phase, 1.0)
                 if phase < stance:
-                    leg.angle = amplitude * (1 - 2 * (phase / stance))
-                    leg.lift = 0.0
+                    angle = amplitude * (1 - 2 * (phase / stance))
                 else:
                     swing = (phase - stance) / (1 - stance)
-                    leg.angle = -amplitude + 2 * amplitude * smoothstep(swing)
-                    leg.lift = math.sin(swing * math.pi) * k.GAIT_LIFT
+                    angle = -amplitude + 2 * amplitude * smoothstep(swing)
+                    lift = math.sin(swing * math.pi) * k.GAIT_LIFT
                 if self.backward_timer > 0:
-                    leg.angle = -leg.angle
-                leg.apply()
-        elif self.state is State.GROOMING:
-            for leg in self.model.legs:
+                    angle = -angle
+            elif self.state is State.GROOMING:
+                knee = k.GAIT_KNEE_ANGLE
                 if leg.is_front:
-                    leg.angle = 0.45 + 0.25 * math.sin(self.time * 20 + leg.swing_sign * 1.3)
-                    leg.lift = 0.55 + 0.15 * math.sin(self.time * 22)
-                else:
-                    leg.angle += (0.0 - leg.angle) * lag(k.LEG_GROOM_RELAX_LERP, dt)
-                    leg.lift += (0.0 - leg.lift) * lag(k.LEG_GROOM_RELAX_LERP, dt)
-                leg.apply()
-        elif self.state is State.FLYING:
-            for leg in self.model.legs:
-                leg.angle += (-0.35 - leg.angle) * lag(k.LEG_TUCK_LERP, dt)
-                leg.lift += (0.5 - leg.lift) * lag(k.LEG_TUCK_LERP, dt)
-                leg.apply()
-        else:
-            for leg in self.model.legs:
-                leg.angle += (0.0 - leg.angle) * lag(k.LEG_REST_LERP, dt)
-                leg.lift += (0.0 - leg.lift) * lag(k.LEG_REST_LERP, dt)
-                leg.apply()
+                    angle = 0.45 + 0.25 * math.sin(self.time * 20 + leg.swing_sign * 1.3)
+                    lift = 0.55 + 0.15 * math.sin(self.time * 22)
+            elif self.state is State.FLYING:
+                angle, lift, knee = -0.35, 0.5, k.GAIT_KNEE_ANGLE
+
+            angle = clamp(angle, -HIP_LIMIT, HIP_LIMIT)
+            lift = clamp(lift, *ELEVATION_RANGE)
+            # A scripted pose is held to the same ground the mechanics uses, so
+            # a later handover needs no projection and no foot ever sinks.
+            if self.state is not State.FLYING:
+                lift = max(lift, ground_elevation(leg.geometry, knee))
+
+            source = self._leg_blend_from[index]
+            leg.angle = source.hip_angle + (angle - source.hip_angle) * blend
+            leg.knee_angle = source.knee_angle + (knee - source.knee_angle) * blend
+            leg.lift = source.elevation_angle + (lift - source.elevation_angle) * blend
+            if self.state is not State.FLYING:
+                leg.lift = max(leg.lift, ground_elevation(leg.geometry, leg.knee_angle))
+            leg.apply()
 
     def _update_wings(self, dt: float) -> None:
-        if self.state is not State.FLYING:
-            # Grounded threat posture: escape-DN activity raises the wings.
-            raising = self.state is not State.SLEEPING and (
+        """One continuous path for folded, raised and beating wings.
+
+        Opening and closing are eased and the stroke is gated behind them, so
+        the wings spread before the first downstroke and flatten before folding.
+        Beating through a half-folded wing swept it through the thorax.
+        """
+        flying = self.state is State.FLYING
+        self._wing_flight_amount += ((1.0 if flying else 0.0) - self._wing_flight_amount) * lag(
+            k.WING_FLIGHT_LERP, dt
+        )
+        if not flying and self._wing_flight_amount < 0.0001:
+            self._wing_flight_amount = 0.0
+
+        # Grounded threat posture: escape-DN activity raises the wings.
+        raising = (
+            not flying
+            and self.state is not State.SLEEPING
+            and (
                 self._live_wing > k.WING_RAISE_THRESHOLD
                 or (self._brain_live and self.dart_timer > 0)
             )
-            self.wing_raise += ((1.0 if raising else 0.0) - self.wing_raise) * lag(
-                k.WING_RAISE_LERP, dt
-            )
-            if self.wing_raise > 0.01:
-                for index, wing in enumerate(self.model.folded_wings.children):
-                    side = -1.0 if index == 0 else 1.0
-                    wing.euler = [
-                        -0.5 * self.wing_raise,
-                        0.0,
-                        side * (0.13 + 0.3 * self.wing_raise),
-                    ]
-            return
-
-        self.flap_phase = math.fmod(
-            self.flap_phase
-            + dt * (k.WING_BEAT_BASE_HZ + k.WING_BEAT_EFFORT_HZ * self.effort_current),
-            1.0,
         )
+        self.wing_raise += ((1.0 if raising else 0.0) - self.wing_raise) * lag(
+            k.WING_RAISE_LERP, dt
+        )
+
+        if flying or self._wing_flight_amount > 0:
+            self.flap_phase += dt * (
+                k.WING_BEAT_BASE_HZ + k.WING_BEAT_EFFORT_HZ * self.effort_current
+            )
         stroke = math.sin(self.flap_phase * 2 * math.pi)
+        gate_start, gate_width = k.WING_BEAT_GATE
+        beat = smoothstep((self._wing_flight_amount - gate_start) / gate_width)
+
+        amount = self._wing_flight_amount
+        grounded_spread = 0.13 + 0.3 * self.wing_raise
+        spread = grounded_spread + (self.model.wing_flight_spread - grounded_spread) * amount
         for index, wing in enumerate(self.model.folded_wings.children):
             side = -1.0 if index == 0 else 1.0
-            wing.euler = [stroke * 0.35, 0.0, side * (0.45 + 0.35 * (0.5 + 0.5 * stroke))]
-        flicker = 0.10 + 0.14 * abs(stroke)
+            wing.euler = [
+                -0.5 * self.wing_raise * (1 - amount) + stroke * 0.35 * beat,
+                0.0,
+                side * (spread + k.WING_STROKE_ROLL * stroke * beat),
+            ]
+
+        flicker = (0.10 + 0.14 * abs(stroke)) * amount
         self.model.blur_wing_left.opacity = flicker
         self.model.blur_wing_right.opacity = flicker
+        self.model.blur_wing_left.hidden = amount == 0.0
+        self.model.blur_wing_right.hidden = amount == 0.0
         self.model.blur_wing_left.euler = [0.0, 0.0, 0.45 + stroke * 0.2]
         self.model.blur_wing_right.euler = [0.0, 0.0, -0.45 - stroke * 0.2]

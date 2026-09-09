@@ -157,12 +157,14 @@ def wing_mesh(mat: Material, segments: int = 28) -> Mesh:
     """Port of FlyModel.swift wingShape(): a flat oval disc.
 
     Upstream builds it from NSBezierPath(ovalIn:) over the rect
-    (x -2.6, y -15.5, w 5.2, h 16.5) with a 0.12 extrusion, so the wing reaches
-    backwards from its hinge and lies over the abdomen when folded. Only one
+    (x -2.6, y -16.5, w 5.2, h 16.5) with a 0.12 extrusion, so the wing reaches
+    backwards from its hinge and lies over the abdomen when folded. The hinge
+    sits at the very end of the membrane on purpose: with the oval straddling
+    it, raising a wing rotated a forward-projecting root through the thorax. Only one
     face is generated: the material is double-sided, so culling is off and a
     second face would double the 0.28 alpha and turn the wing milky.
     """
-    cx, cy = 0.0, -15.5 + 16.5 / 2.0
+    cx, cy = 0.0, -16.5 + 16.5 / 2.0
     rx, ry = 5.2 / 2.0, 16.5 / 2.0
     positions, normals, uvs, indices = [], [], [], []
     positions.append((cx, cy, 0.0))
@@ -269,6 +271,9 @@ class FlyModel:
     blur_wing_left: Node
     blur_wing_right: Node
     abdomen: Node
+    # How far the wings swing out in flight. Body-specific: a beetle keeps a
+    # narrower stroke than a fly, whose wings must clear a raised hinge.
+    wing_flight_spread: float = 0.625
 
 
 def build_leg(
@@ -420,7 +425,9 @@ def build_fly_model() -> FlyModel:
             Node(
                 name="wing",
                 mesh=shared_wing,
-                position=[side * 1.6, 0.5, 7.7 if side > 0 else 7.55],
+                # Above the thorax and the breathing abdomen, so a wing at any
+                # point in its stroke has something to sweep over.
+                position=[side * 1.6, 0.5, 10.4 if side > 0 else 10.25],
                 euler=[0.0, 0.0, side * 0.13],
             )
         )
@@ -435,7 +442,7 @@ def build_fly_model() -> FlyModel:
                 1.0,
                 Material(diffuse=(0.85, 0.85, 0.85, 0.30), lighting="constant", double_sided=True),
             ),
-            position=[side * 6.0, 1.5, 8.2],
+            position=[side * 8.4, -2.8, 10.65],
             scale=[5.5, 2.4, 0.3],
             euler=[0.0, 0.0, side * -0.45],
         )
@@ -453,4 +460,5 @@ def build_fly_model() -> FlyModel:
         blur_wing_left=blur_left,
         blur_wing_right=blur_right,
         abdomen=abdomen,
+        wing_flight_spread=1.1,
     )

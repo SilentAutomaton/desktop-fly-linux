@@ -292,7 +292,9 @@ SCARE_COOLDOWN_CASUAL_S: Final = 2.5
 
 ALTITUDE_SCALE_GAIN: Final = 0.8  # higher is nearer the viewer, so bigger
 ALTITUDE_Z: Final = 90.0
-LANDING_ALTITUDE: Final = 0.035  # touchdown happens through the flare, never a snap
+LANDING_ALTITUDE: Final = 0.003  # touchdown happens through the flare, never a snap
+FLARE_SETTLE_ALTITUDE: Final = 0.2  # the hover wobble fades out below this
+PITCH_LERP: Final = 12.0  # the body pitches into and out of a climb, never snaps
 FLIGHT_RISE_FRACTION: Final = 0.25
 FLIGHT_FALL_FRACTION: Final = 0.3
 FLIGHT_ALTITUDE_LERP: Final = 6.0
@@ -328,12 +330,26 @@ GAIT_STANCE_LIMITS: Final = (0.35, 0.9)
 GAIT_LIFT: Final = 0.55
 GAIT_BOB_Z: Final = 0.35
 
-LEG_GROOM_RELAX_LERP: Final = 8.0  # the four legs not doing the grooming
-LEG_TUCK_LERP: Final = 6.0  # legs folding up in flight
-LEG_REST_LERP: Final = 10.0  # legs settling back down when idle
+# Scripted leg poses are blended in from whatever is on screen rather than
+# assigned, so a change of behaviour never shows up as a joint snapping back to
+# rest. Retargeting from the displayed pose means an interrupted transition
+# picks up where it was instead of restarting.
+LEG_BLEND_S: Final = 0.18
+GAIT_KNEE_ANGLE: Final = 0.75  # the knee an active leg holds; at rest it is REST_KNEE
 
-WING_BEAT_BASE_HZ: Final = 14.0
+# The body turns at a rate, not instantly: a proportional heading controller
+# with a ceiling on how fast it may turn and on how fast that may change.
+TURN_GAIN: Final = 16.0
+TURN_RATE_LIMIT: Final = 8.0  # rad/s
+TURN_ACCELERATION_LIMIT: Final = 60.0  # rad/s^2
+
+WING_BEAT_BASE_HZ: Final = 22.0
 WING_BEAT_EFFORT_HZ: Final = 10.0
+# The wings open and close over this lag, and the stroke is gated until they
+# have opened: beating through a half-folded wing puts it through the thorax.
+WING_FLIGHT_LERP: Final = 18.0
+WING_BEAT_GATE: Final = (0.8, 0.2)  # start, width, over the open fraction
+WING_STROKE_ROLL: Final = 0.175  # rad of sweep either side of the held spread
 WING_RAISE_THRESHOLD: Final = 0.7  # escape-DN rate that raises the wings on foot
 WING_RAISE_LERP: Final = 8.0
 
