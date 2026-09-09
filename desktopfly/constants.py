@@ -206,6 +206,17 @@ CIRCADIAN_COMPRESSION: Final = 0.35
 MAX_SIM_MS_PER_FRAME: Final = 50  # a stalled frame must not fire a burst
 MAX_FRAME_DT_S: Final = 0.05
 
+# The whole closed loop - sensing, neurons, motor output, body integration and
+# the feedback back into the cord - runs on this fixed tick. Advancing only
+# part of it at a fixed rate while holding the rest per displayed frame would
+# make the model behave differently on a 60 Hz and a 120 Hz screen.
+SIMULATION_TICK_S: Final = 1.0 / 120.0
+SIMULATION_MAX_CATCHUP_S: Final = 0.1
+
+# Temperature changes how much mechanical time passes, so force integration,
+# foot contact and the sensory feedback that follows all change together.
+MOTOR_TEMPO_LIMITS: Final = (0.5, 2.0)
+
 # ---------------------------------------------------------------------------
 # Body — port of FlyModel.swift
 # ---------------------------------------------------------------------------

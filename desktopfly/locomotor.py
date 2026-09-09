@@ -75,11 +75,12 @@ class LocomotorSim:
         self._collect_groups(circuit)
 
         self.commands = [LegMotorCommand() for _ in range(LEG_COUNT)]
+        self._feedback: list[LegFeedback] = []
+        self._transduced: object = None
         self.total_spikes = 0
         self.motor_spikes = 0
         self.sensory_spikes = 0
         self.sim_ms = 0
-        self.feedback: list[LegFeedback] = []
 
         # Lesions are diagnostic interventions, used by the locomotor suite to
         # verify that a movement travelled the causal path it claims to.
@@ -122,7 +123,17 @@ class LocomotorSim:
             elif neuron.role == "motor" and neuron.leg is not None and neuron.motor_channel:
                 motor.setdefault((neuron.leg, neuron.motor_channel), []).append(i)
         self._command_groups = {key: np.asarray(v, np.int64) for key, v in commands.items()}
-        self._motor_groups = {key: np.asarray(v, np.int64) for key, v in motor.items()}
+
+        # The 48 motor channel means are read every simulated millisecond, so
+        # they are gathered as one gather plus one segmented sum rather than as
+        # 48 separate reductions over six-element index arrays.
+        self._channel_slot = {key: slot for slot, key in enumerate(motor)}
+        sizes = [len(v) for v in motor.values()]
+        self._channel_index = np.concatenate(
+            [np.asarray(v, np.int64) for v in motor.values()]
+        )
+        self._channel_start = np.concatenate(([0], np.cumsum(sizes)[:-1])).astype(np.int64)
+        self._channel_size = np.asarray(sizes, dtype=np.float64)
 
         self._roles = np.asarray([n.role for n in circuit.neurons])
         self._legs = np.asarray([-1 if n.leg is None else n.leg for n in circuit.neurons])
@@ -139,6 +150,15 @@ class LocomotorSim:
         self._sensory_joint = ~(self._sensory_load | self._sensory_hair)
 
     # -- public API ---------------------------------------------------------
+
+    @property
+    def feedback(self) -> list[LegFeedback]:
+        return self._feedback
+
+    @feedback.setter
+    def feedback(self, value: list[LegFeedback]) -> None:
+        self._feedback = value
+        self._transduced = None  # the sensory drive it implies is now stale
 
     def set_descending(self, cell_type: str, side: str, rate: float) -> None:
         """Drive one descending cell type on one side at a population firing rate.
@@ -166,10 +186,12 @@ class LocomotorSim:
         """Integrate `ms` milliseconds. Port of Locomotor.swift LocomotorSim.step."""
         if ms <= 0:
             return
-        # The feedback is written once per call and cannot change inside it, so
-        # the transduction upstream recomputes every millisecond is computed
-        # once here. The values are identical.
-        self._transduce_sensory()
+        # The transduction upstream recomputes every millisecond depends only on
+        # the feedback, which cannot change inside a call. Recomputing it once
+        # per new sample gives identical values for a fraction of the work.
+        if self._transduced is not self._feedback:
+            self._transduce_sensory()
+            self._transduced = self._feedback
         for _ in range(ms):
             self.sim_ms += 1
             self._integrate_one_ms()
@@ -266,12 +288,15 @@ class LocomotorSim:
             self._next_inhibitory += self._w_inhibitory[spiked].sum(axis=0)
 
     def _read_motor_commands(self) -> None:
+        rates = (
+            np.add.reduceat(self._rates[self._channel_index], self._channel_start)
+            / self._channel_size
+        )
+        activations = rates / (rates + k.MOTOR_HALF_ACTIVATION_HZ)
+
         def activity(leg: int, channel: str) -> float:
-            group = self._motor_groups.get((leg, channel))
-            if group is None:
-                return 0.0
-            rate = float(self._rates[group].mean())
-            return rate / (rate + k.MOTOR_HALF_ACTIVATION_HZ)
+            slot = self._channel_slot.get((leg, channel))
+            return 0.0 if slot is None else float(activations[slot])
 
         for leg in range(LEG_COUNT):
             self.commands[leg] = LegMotorCommand(

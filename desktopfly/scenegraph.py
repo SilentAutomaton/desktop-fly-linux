@@ -17,6 +17,7 @@ import numpy as np
 import numpy.typing as npt
 
 Vec3 = tuple[float, float, float]
+Mat3 = npt.NDArray[np.float32]
 Mat4 = npt.NDArray[np.float32]
 
 
@@ -49,6 +50,10 @@ class Node:
     scale: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0])
     hidden: bool = False
     opacity: float = 1.0
+    # An explicit rotation, used instead of `euler` when set. The leg joints
+    # need Rz(yaw) @ Ry(-lift), which is the opposite order to the one below and
+    # so cannot be written as an euler triple in this convention.
+    rotation: Mat3 | None = None
     mesh: Mesh | None = None
     children: list[Node] = field(default_factory=list)
 
@@ -57,12 +62,21 @@ class Node:
         return child
 
     def local_matrix(self) -> Mat4:
+        rotation = self._rotation_matrix()
+        matrix = np.eye(4, dtype=np.float32)
+        matrix[:3, :3] = rotation * np.asarray(self.scale, dtype=np.float32)
+        matrix[:3, 3] = self.position
+        return matrix
+
+    def _rotation_matrix(self) -> Mat3:
+        if self.rotation is not None:
+            return self.rotation
         px, py, pz = self.euler
         cx, sx = np.cos(px), np.sin(px)
         cy, sy = np.cos(py), np.sin(py)
         cz, sz = np.cos(pz), np.sin(pz)
         # Rx @ Ry @ Rz, written out because it is called once per node per frame.
-        rotation = np.array(
+        return np.array(
             [
                 [cy * cz, -cy * sz, sy],
                 [sx * sy * cz + cx * sz, -sx * sy * sz + cx * cz, -sx * cy],
@@ -70,10 +84,6 @@ class Node:
             ],
             dtype=np.float32,
         )
-        matrix = np.eye(4, dtype=np.float32)
-        matrix[:3, :3] = rotation * np.asarray(self.scale, dtype=np.float32)
-        matrix[:3, 3] = self.position
-        return matrix
 
     def walk(self, parent: Mat4 | None = None) -> list[tuple[Mesh, Mat4, float]]:
         """Flatten the visible subtree into (mesh, world matrix, opacity) triples."""

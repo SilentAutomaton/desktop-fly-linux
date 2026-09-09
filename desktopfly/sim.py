@@ -16,13 +16,16 @@ from __future__ import annotations
 
 import math
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
 import numpy.typing as npt
 
 from . import constants as k
-from .dataset import Circuit
+from .dataset import Circuit, LocomotorCircuit
+from .legdynamics import LegFeedback, LegMotorCommand
+from .locomotor import LocomotorSim
 
 # Roles that share one firing-rate readout. The index is the slot in the rate
 # vector counted each millisecond; the giant fiber is not here because it is
@@ -39,6 +42,34 @@ RATE_GROUPS = 7
 # Milliseconds of spontaneous-noise draws taken per numpy call.
 NOISE_BLOCK_MS = 64
 
+# The FlyWire cell types that have a named homolog in the male nerve cord, and
+# so can carry a population rate across the specimen interface. DNa01 and DNa02
+# stay separate: their combined steering readout is useful to the legacy body,
+# but copying that pooled rate into both male cell types would erase the cell
+# identity the extraction was careful to preserve.
+CORD_SOURCE_TYPES = ("DNp09", "DNa01", "DNa02", "MDN")
+
+
+class SimulationClock:
+    """A fixed-rate tick, so display refresh cannot change the model.
+
+    Port of Sim.swift SimulationClock. Sensing, the neural update, the motor
+    output, the body integration and the feedback that returns to the nerve cord
+    all advance together on this clock. Catch-up is bounded, so a stalled frame
+    replays a little and never a burst.
+    """
+
+    def __init__(self) -> None:
+        self._accumulator = 0.0
+
+    def advance(self, elapsed: float, tick: Callable[[float], None]) -> None:
+        if not math.isfinite(elapsed) or elapsed <= 0:
+            return
+        self._accumulator += min(k.SIMULATION_MAX_CATCHUP_S, elapsed)
+        while self._accumulator + 1e-10 >= k.SIMULATION_TICK_S:
+            self._accumulator -= k.SIMULATION_TICK_S
+            tick(k.SIMULATION_TICK_S)
+
 
 @dataclass
 class BrainSignals:
@@ -54,6 +85,7 @@ class BrainSignals:
     arousal: float = 0.0  # whole-population activity, ~0..1
     tempo: float = 1.0  # thermal scaling of locomotion
     sleep: bool = False  # circadian rhythm plus user idleness
+    leg_commands: list[LegMotorCommand] | None = None  # MaleCNS motor output, RF LF RM LM RH LH
 
 
 @dataclass
@@ -121,8 +153,15 @@ class LIFSim:
     """668 real neurons, 18968 real signed synapses, integrated at 1 kHz."""
 
     def __init__(
-        self, circuit: Circuit, spike_bus: SpikeBus | None = None, seed: int | None = None
+        self,
+        circuit: Circuit,
+        spike_bus: SpikeBus | None = None,
+        seed: int | None = None,
+        locomotor_circuit: LocomotorCircuit | None = None,
     ):
+        self.locomotor = LocomotorSim(locomotor_circuit) if locomotor_circuit is not None else None
+        # Written by the coordinator each tick: what the legs are actually doing.
+        self.leg_feedback: list[LegFeedback] = []
         self.n = len(circuit.neurons)
         self.roles = [neuron.role for neuron in circuit.neurons]
         self.types = [neuron.type for neuron in circuit.neurons]
@@ -155,6 +194,7 @@ class LIFSim:
             0.0, 2.0 * math.pi, size=len(self.groups.ascending)
         )
         self._build_weights(circuit)
+        self._collect_cord_sources(circuit)
 
         # Inputs, written by the coordinator each frame.
         self.loom_left = 0.0
@@ -230,6 +270,25 @@ class LIFSim:
         ).astype(np.float64)
         # One spike in one millisecond is 1000 Hz; divide by the population size.
         self._rate_hz_scale = 1000.0 / sizes
+
+    def _collect_cord_sources(self, circuit: Circuit) -> None:
+        """Group the descending neurons that drive the male nerve cord.
+
+        Port of the cordSource* block in Sim.swift. One group per cell type per
+        side, so a rate crosses the specimen interface as that cell type's rate
+        and not as an anonymous average.
+        """
+        groups: dict[tuple[str, str], list[int]] = {}
+        for i, neuron in enumerate(circuit.neurons):
+            if neuron.type in CORD_SOURCE_TYPES:
+                groups.setdefault((neuron.type, neuron.side), []).append(i)
+        self._cord_source_keys = list(groups)
+        self._cord_source_of = np.full(self.n, -1, dtype=np.int64)
+        self._cord_source_size = np.ones(len(groups), dtype=np.float64)
+        for slot, key in enumerate(self._cord_source_keys):
+            self._cord_source_of[groups[key]] = slot
+            self._cord_source_size[slot] = len(groups[key])
+        self._cord_source_rates = np.zeros(len(groups), dtype=np.float64)
 
     def _make_baselines(self, circuit: Circuit) -> npt.NDArray[np.float64]:
         baseline = np.empty(self.n, dtype=np.float64)
@@ -331,6 +390,8 @@ class LIFSim:
         """Integrate `ms` milliseconds. Port of Sim.swift LIFSim.step."""
         if ms <= 0:
             return
+        if self.locomotor is not None:
+            self.locomotor.feedback = self.leg_feedback
         self._merge_pending_stims()
 
         # The neuromodulation inputs are written once per frame, so the resting
@@ -353,6 +414,7 @@ class LIFSim:
                 spiked = self._detect_spikes()
                 self._deliver(spiked)
                 self._update_rates(spiked)
+                self._drive_cord(spiked)
                 if self.spike_bus is not None and len(spiked):
                     sampled.extend(self._sample_spikes(spiked))
 
@@ -398,9 +460,11 @@ class LIFSim:
             v[groups.loom_left] += self.loom_left * k.LOOM_GAIN * self.sensory_gate
         if self.loom_right > 0.001:
             v[groups.loom_right] += self.loom_right * k.LOOM_GAIN * self.sensory_gate
-        if self.gait_drive > 0.001:
+        if self.locomotor is None and self.gait_drive > 0.001:
             # Body to brain: the gait rhythm feeds the real ascending neurons in
             # phase with the legs, closing the loop the connectome describes.
+            # This is the fallback. With the nerve cord present the same loop is
+            # closed by real joint and contact feedback instead of a sinusoid.
             phase = self.gait_phase * 2.0 * math.pi
             wave = 0.5 + 0.5 * np.sin(phase + self._ascending_phase)
             v[groups.ascending] += self.gait_drive * k.GAIT_GAIN * wave
@@ -453,6 +517,27 @@ class LIFSim:
         self._rates += (counts * self._rate_hz_scale - self._rates) * k.RATE_ALPHA
         population = len(spiked) * 1000.0 / self.n
         self.rate_population += (population - self.rate_population) * k.RATE_ALPHA
+
+    def _drive_cord(self, spiked: npt.NDArray[np.int64]) -> None:
+        """Carry this millisecond's descending rates into the male nerve cord.
+
+        A modelled homologous population-rate interface, not a synapse: there is
+        no cross-specimen connection in either dataset. Port of the cord block
+        in Sim.swift LIFSim.step.
+        """
+        cord = self.locomotor
+        if cord is None:
+            return
+        self._cord_source_rates *= 1.0 - k.RATE_ALPHA
+        if len(spiked):
+            slots = self._cord_source_of[spiked]
+            slots = slots[slots >= 0]
+            if len(slots):
+                counted = np.bincount(slots, minlength=len(self._cord_source_rates))
+                self._cord_source_rates += 1000.0 * k.RATE_ALPHA * counted / self._cord_source_size
+        for slot, (cell_type, side) in enumerate(self._cord_source_keys):
+            cord.set_descending(cell_type, side, float(self._cord_source_rates[slot]))
+        cord.step(1)
 
     def _sample_spikes(self, spiked: npt.NDArray[np.int64]) -> list[SpikeEvent]:
         # Under heavy activity only a sample is shown, or the flash pool churns

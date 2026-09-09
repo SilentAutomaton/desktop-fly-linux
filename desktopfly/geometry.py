@@ -23,6 +23,7 @@ import numpy as np
 import numpy.typing as npt
 
 from .constants import FLY_SCALE
+from .legdynamics import ANKLE_ANGLE, REST_KNEE, LegFeedback, LegGeometry, ground_elevation
 from .scenegraph import Material, Mesh, Node
 
 Color = tuple[float, float, float, float]
@@ -197,18 +198,67 @@ class Leg:
     """One of the six legs. Port of FlyModel.swift Leg."""
 
     def __init__(
-        self, root: Node, base_yaw: float, swing_sign: float, phase: float, is_front: bool
+        self,
+        root: Node,
+        knee: Node,
+        ankle: Node,
+        geometry: LegGeometry,
+        base_yaw: float,
+        swing_sign: float,
+        phase: float,
+        is_front: bool,
     ):
         self.root = root
+        self.knee = knee
+        self.ankle = ankle
+        self.geometry = geometry
         self.base_yaw = base_yaw
         self.swing_sign = swing_sign
         self.phase = phase
         self.is_front = is_front
         self.angle = 0.0
         self.lift = 0.0
+        self.knee_angle = 0.75
 
     def apply(self) -> None:
-        self.root.euler = [0.0, -self.lift, self.base_yaw + self.swing_sign * self.angle]
+        """Write the three joint angles into the node chain.
+
+        Every controller - the scripted poses and the mechanics alike - uses
+        these same local axes, so changing behaviour cannot change the
+        skeleton's rotation convention or quietly reset a joint. The order is
+        Rz(yaw) then Ry(-lift), which is what makes the rendered toe land where
+        legdynamics computes the physical one; the reverse order was the
+        discontinuity every state change used to show.
+        """
+        yaw = self.base_yaw + self.swing_sign * self.angle
+        self.root.rotation = _yaw_then_lift(yaw, self.lift)
+        self.knee.euler = [0.0, self.knee_angle, 0.0]
+        self.ankle.euler = [0.0, ANKLE_ANGLE, 0.0]
+
+    def apply_feedback(self, feedback: LegFeedback) -> None:
+        self.angle = feedback.hip_angle
+        self.lift = feedback.elevation_angle
+        self.knee_angle = feedback.knee_angle
+        self.apply()
+
+    def pose(self) -> LegFeedback:
+        """The displayed pose, as the mechanics would describe it."""
+        return LegFeedback(
+            hip_angle=self.angle, elevation_angle=self.lift, knee_angle=self.knee_angle
+        )
+
+
+def _yaw_then_lift(yaw: float, lift: float) -> npt.NDArray[np.float32]:
+    cos_y, sin_y = math.cos(yaw), math.sin(yaw)
+    cos_l, sin_l = math.cos(-lift), math.sin(-lift)
+    return np.array(
+        [
+            [cos_y * cos_l, -sin_y, cos_y * sin_l],
+            [sin_y * cos_l, cos_y, sin_y * sin_l],
+            [-sin_l, 0.0, cos_l],
+        ],
+        dtype=np.float32,
+    )
 
 
 @dataclass
@@ -230,12 +280,14 @@ def build_leg(
     femur: float,
     tibia: float,
     tarsus: float,
+    color: Color = LEG_BROWN,
+    thickness: float = 1.0,
 ) -> Leg:
     """Port of FlyModel.swift buildLeg(): femur, tibia and tarsus down a chain."""
-    leg_material = material(LEG_BROWN)
+    leg_material = material(color)
     root = Node(name="leg", position=list(attach))
 
-    femur_node = Node(mesh=capsule_mesh(0.48, femur, leg_material))
+    femur_node = Node(mesh=capsule_mesh(0.48 * thickness, femur, leg_material))
     femur_node.euler = [0.0, 0.0, -math.pi / 2]
     femur_node.position = [femur / 2, 0.0, 0.0]
     root.add(femur_node)
@@ -243,7 +295,7 @@ def build_leg(
     knee = Node(name="knee", position=[femur, 0.0, 0.0], euler=[0.0, 0.75, -0.30 * swing_sign])
     root.add(knee)
 
-    tibia_node = Node(mesh=capsule_mesh(0.38, tibia, leg_material))
+    tibia_node = Node(mesh=capsule_mesh(0.38 * thickness, tibia, leg_material))
     tibia_node.euler = [0.0, 0.0, -math.pi / 2]
     tibia_node.position = [tibia / 2, 0.0, 0.0]
     knee.add(tibia_node)
@@ -252,13 +304,25 @@ def build_leg(
     knee.add(ankle)
 
     tarsus_node = Node(
-        mesh=capsule_mesh(0.24, tarsus, material(blend(LEG_BROWN, 0.25, (0, 0, 0, 1))))
+        mesh=capsule_mesh(0.24 * thickness, tarsus, material(blend(color, 0.25, (0, 0, 0, 1))))
     )
     tarsus_node.euler = [0.0, 0.0, -math.pi / 2]
     tarsus_node.position = [tarsus / 2, 0.0, 0.0]
     ankle.add(tarsus_node)
 
-    leg = Leg(root, base_yaw, swing_sign, phase, is_front)
+    geometry = LegGeometry(
+        attach_x=attach[0],
+        attach_y=attach[1],
+        attach_z=attach[2],
+        base_yaw=base_yaw,
+        side=swing_sign,
+        femur=femur,
+        tibia=tibia,
+        tarsus=tarsus,
+    )
+    leg = Leg(root, knee, ankle, geometry, base_yaw, swing_sign, phase, is_front)
+    leg.knee_angle = REST_KNEE
+    leg.lift = ground_elevation(geometry, REST_KNEE)
     leg.apply()
     return leg
 

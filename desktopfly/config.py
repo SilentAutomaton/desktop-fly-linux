@@ -71,6 +71,7 @@ class CircadianConfig:
 @dataclass
 class SimConfig:
     enabled: bool = True  # false means legacy behaviour only, with no connectome
+    locomotor: bool = True  # false falls back to the scripted gait, no MaleCNS cord
     max_step_ms: int = 50
     seed: int | None = None
 

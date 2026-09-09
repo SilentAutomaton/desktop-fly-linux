@@ -14,9 +14,18 @@ import math
 import random
 from enum import Enum
 
+import numpy as np
+
 from . import constants as k
 from .environment import Ledge
 from .geometry import FlyModel, build_fly_model
+from .legdynamics import (
+    CONTACT_HEIGHT,
+    LegBodyMotion,
+    LegFeedback,
+    LegMotorCommand,
+    SixLegDynamics,
+)
 from .scenegraph import Node
 from .sim import BrainSignals
 
@@ -76,6 +85,13 @@ def lag(rate: float, dt: float) -> float:
 class Fly:
     def __init__(self, position: tuple[float, float]):
         self.model: FlyModel = build_fly_model()
+        self.leg_dynamics = SixLegDynamics([leg.geometry for leg in self.model.legs])
+        for leg, pose in zip(self.model.legs, self.leg_dynamics.feedback, strict=True):
+            leg.apply_feedback(pose)
+        # What the legs are actually doing, read off the displayed pose. Empty
+        # until the first frame has sampled it.
+        self._sensed_leg_feedback: list[LegFeedback] = []
+        self._motor_walking = False
         self.x, self.y = position
         self.heading = random.uniform(0.0, 2 * math.pi)
         self.speed = 30.0
@@ -119,6 +135,18 @@ class Fly:
         return self.model.root
 
     @property
+    def leg_feedback(self) -> list[LegFeedback]:
+        """Proprioception as the fly's own body would report it.
+
+        The displayed pose when there is one, so the loop closes on what the
+        user actually sees rather than on a physics state the renderer may be
+        blending away from.
+        """
+        if len(self._sensed_leg_feedback) == len(self.model.legs):
+            return self._sensed_leg_feedback
+        return self.leg_dynamics.feedback
+
+    @property
     def walking_intensity(self) -> float:
         if self.state is not State.WALKING:
             return 0.0
@@ -150,18 +178,49 @@ class Fly:
         self._live_arousal = signals.arousal if signals else 0.0
         self._live_wing = signals.wing_drive if signals else 0.0
 
+        # Temperature changes how much mechanical time passes, so the forces,
+        # the foot contact and the feedback that follows all change together.
+        tempo = signals.tempo if signals else 1.0
+        motor_tempo = clamp(tempo, *k.MOTOR_TEMPO_LIMITS) if math.isfinite(tempo) else 1.0
+        motor_dt = dt * motor_tempo
+        commands = signals.leg_commands if signals else None
+        driven = commands is not None and len(commands) == len(self.model.legs)
+
         if self.state is State.FLYING:
             self.saccade = 0.0  # airborne heading is geometric, not a walk saccade
             self._update_flight(dt)
         elif signals is not None:
-            self._step_saccade(dt)
+            if signals.leg_commands is None:
+                self._step_saccade(dt)
             self._brain_behavior(signals, dt, bounds, mouse)
             if self.state is State.WALKING:
-                self._update_walk(dt, bounds)
+                if driven:
+                    assert commands is not None
+                    self._prepare_motor_control(motor_tempo)
+                    self.saccade = 0.0
+                    motion = self.leg_dynamics.advance(commands, motor_dt)
+                    self.speed = abs(motion.forward) / max(0.001, dt)
+                    self._update_walk(dt, bounds, motion)
+                else:
+                    self._motor_walking = False
+                    self._update_walk(dt, bounds)
         else:
             self._legacy_behavior(dt, bounds, mouse)
 
+        if not driven or self.state not in (State.WALKING, State.IDLE, State.SLEEPING):
+            self._motor_walking = False
+        if driven and self.state in (State.IDLE, State.SLEEPING):
+            # Standing is a posture the legs hold, not a pose they snap to.
+            self._prepare_motor_control(motor_tempo)
+            self.leg_dynamics.advance(
+                [LegMotorCommand() for _ in self.model.legs], motor_dt
+            )
+            self._motor_walking = True
+        if not self._motor_walking:
+            self.leg_dynamics.reset_contact(grounded=self.state is not State.FLYING)
+
         self._update_legs(dt)
+        self._sample_leg_feedback(dt)
         self._update_wings(dt)
         rate, depth = k.BREATHE_ASLEEP if self.state is State.SLEEPING else k.BREATHE_AWAKE
         self.model.abdomen.scale = [0.9, 1.5, 0.75 * (1 + depth * math.sin(self.time * rate))]
@@ -171,6 +230,58 @@ class Fly:
         node = self.node
         node.position = [self.x, self.y, node.position[2]]
         node.euler = [self.pitch, 0.0, self.heading - math.pi / 2]
+
+    def _prepare_motor_control(self, tempo: float) -> None:
+        """Hand the displayed pose to the physics, once, on the way in.
+
+        Adopting the pose rather than resetting to one is the whole point: the
+        legs carry on from where the renderer had them, so no behaviour change
+        shows up as a joint snapping back to rest.
+        """
+        if not self._motor_walking:
+            self.leg_dynamics.adopt_pose(
+                self.leg_feedback, grounded=True, velocity_scale=1.0 / tempo
+            )
+        self._motor_walking = True
+
+    def _sample_leg_feedback(self, dt: float) -> None:
+        """Read proprioception off the rendered skeleton.
+
+        Both control paths agree on the result because the toe position comes
+        from the same node chain the renderer draws, not from a physics state
+        that a blend may still be catching up with.
+        """
+        previous = self.leg_feedback
+        physical = self.leg_dynamics.feedback
+        sensed: list[LegFeedback] = []
+        for index, leg in enumerate(self.model.legs):
+            chain = leg.root.local_matrix() @ leg.knee.local_matrix() @ leg.ankle.local_matrix()
+            toe = chain @ np.array([leg.geometry.tarsus, 0.0, 0.0, 1.0], dtype=np.float32)
+            value = LegFeedback(
+                hip_angle=leg.angle,
+                knee_angle=leg.knee_angle,
+                elevation_angle=leg.lift,
+                foot_x=float(toe[0]),
+                foot_y=float(toe[1]),
+                foot_height=float(toe[2]) + self.node.position[2],
+            )
+            span = max(0.001, dt)
+            value.hip_velocity = (value.hip_angle - previous[index].hip_angle) / span
+            value.knee_velocity = (value.knee_angle - previous[index].knee_angle) / span
+            value.elevation_velocity = (
+                value.elevation_angle - previous[index].elevation_angle
+            ) / span
+            value.contact = self.state is not State.FLYING and value.foot_height <= CONTACT_HEIGHT
+            sensed.append(value)
+        supports = max(1, sum(1 for value in sensed if value.contact))
+        for index, value in enumerate(sensed):
+            if not value.contact:
+                value.load = 0.0
+            elif self._motor_walking:
+                value.load = physical[index].load
+            else:
+                value.load = 1.0 / supports
+        self._sensed_leg_feedback = sensed
 
     def _set_state(self, state: State) -> None:
         if state is self.state:
@@ -260,11 +371,14 @@ class Fly:
                 self.speed = 0.0
             self.backward_timer = k.BACKWARD_DURATION_S
 
+        # The two lines below are what the body did before the nerve cord: a
+        # commanded speed and a commanded turn. With real motor output present
+        # they must not run, or a silenced cord would still walk the fly.
         if self.state is State.WALKING:
-            if self.dart_timer == 0 and self.backward_timer == 0:
+            if s.leg_commands is None and self.dart_timer == 0 and self.backward_timer == 0:
                 target = (k.WALK_SPEED_BASE + s.walk_drive * k.WALK_SPEED_GAIN) * s.tempo
                 self.speed += (target - self.speed) * lag(k.WALK_SPEED_LERP, dt)
-            if self.ledge is None:
+            if s.leg_commands is None and self.ledge is None:
                 self.heading += s.turn_bias * dt  # DNa01/DNa02 steering
 
         # Spontaneous takeoff, gated on whole-population arousal; how aroused the
@@ -338,7 +452,9 @@ class Fly:
 
     # -- walking ------------------------------------------------------------
 
-    def _update_walk(self, dt: float, bounds: tuple[float, float]) -> None:
+    def _update_walk(
+        self, dt: float, bounds: tuple[float, float], motor_motion: LegBodyMotion | None = None
+    ) -> None:
         width, height = bounds
         if self.ledge is not None and not self._refresh_ledge(bounds):
             return
@@ -347,12 +463,16 @@ class Fly:
             ledge = self.ledge
             # Walking an edge means holding a heading of 0 or pi and tracking
             # the edge height; the window may be moving under its feet.
-            self.heading += random.uniform(-1.0, 1.0) * k.LEDGE_JITTER * math.sqrt(dt)
+            if motor_motion is None:
+                self.heading += random.uniform(-1.0, 1.0) * k.LEDGE_JITTER * math.sqrt(dt)
             along = 0.0 if math.cos(self.heading) >= 0 else math.pi
             self.heading += angle_difference(self.heading, along) * lag(
                 k.LEDGE_ALIGN_LERP, dt
             )
-            self.x += math.cos(self.heading) * self._effective_speed * dt
+            along_edge = (
+                motor_motion.forward if motor_motion is not None else self._effective_speed * dt
+            )
+            self.x += math.cos(self.heading) * along_edge
             self.y += (ledge.y - self.y) * lag(k.LEDGE_SNAP_LERP, dt)
             if self.x <= ledge.x0 + k.LEDGE_END_MARGIN and math.cos(self.heading) < 0:
                 self.heading = 0.0
@@ -362,7 +482,11 @@ class Fly:
             if random.random() < lag(k.LEDGE_LEAVE_CHANCE, dt):
                 self.ledge = None
         else:
-            self.heading += random.uniform(-1.0, 1.0) * k.WANDER_JITTER * math.sqrt(dt)
+            start_heading = self.heading
+            if motor_motion is not None:
+                self.heading += motor_motion.yaw
+            else:
+                self.heading += random.uniform(-1.0, 1.0) * k.WANDER_JITTER * math.sqrt(dt)
             half_width = width / 2 - k.EDGE_MARGIN
             half_height = height / 2 - k.EDGE_MARGIN
             if abs(self.x) > half_width or abs(self.y) > half_height:
@@ -370,14 +494,25 @@ class Fly:
                 self.heading += angle_difference(self.heading, to_center) * lag(
                     k.BOUNDARY_STEER_LERP, dt
                 )
-            speed = self._effective_speed
-            self.x += math.cos(self.heading) * speed * dt
-            self.y += math.sin(self.heading) * speed * dt
+            if motor_motion is not None:
+                forward, lateral = motor_motion.forward, motor_motion.lateral
+            else:
+                forward, lateral = self._effective_speed * dt, 0.0
+            # The mechanics integrates displacement in the frame the tick began
+            # in, so rotating it by the final heading would apply the turn twice.
+            heading = start_heading if motor_motion is not None else self.heading
+            self.x += math.cos(heading) * forward + math.sin(heading) * lateral
+            self.y += math.sin(heading) * forward - math.cos(heading) * lateral
             self.x = clamp(self.x, -width / 2 + k.WALL_MARGIN, width / 2 - k.WALL_MARGIN)
             self.y = clamp(self.y, -height / 2 + k.WALL_MARGIN, height / 2 - k.WALL_MARGIN)
             self._maybe_attach_ledge(dt)
 
-        self.node.position[2] = k.GAIT_BOB_Z * abs(math.sin(self.gait_phase * math.pi * 2))
+        # Under motor control the legs supply the body height themselves.
+        self.node.position[2] = (
+            0.0
+            if motor_motion is not None
+            else k.GAIT_BOB_Z * abs(math.sin(self.gait_phase * math.pi * 2))
+        )
 
     def _refresh_ledge(self, bounds: tuple[float, float]) -> bool:
         """Follow the window this edge belongs to; take off if it vanished.
@@ -574,6 +709,10 @@ class Fly:
     # -- limbs --------------------------------------------------------------
 
     def _update_legs(self, dt: float) -> None:
+        if self._motor_walking:
+            for leg, feedback in zip(self.model.legs, self.leg_dynamics.feedback, strict=True):
+                leg.apply_feedback(feedback)
+            return
         speed = abs(self._effective_speed)
         if self.state is State.WALKING and speed > 1:
             amplitude = clamp(

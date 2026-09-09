@@ -48,6 +48,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="end-to-end neuron-to-body checks, headless, exit 0 on pass",
     )
     parser.add_argument(
+        "--locomotortest",
+        action="store_true",
+        help="MaleCNS circuit, leg mechanics and the loop between them, headless",
+    )
+    parser.add_argument(
         "--snapshot", metavar="PATH", help="offscreen render of the fly body, for comparison"
     )
     parser.add_argument("--brainshot", metavar="PATH", help="offscreen render of the brain map")
@@ -86,6 +91,10 @@ def main(argv: list[str] | None = None) -> int:
         from .selftest.behavior_test import run as run_behavior
 
         return run_behavior(seed=args.seed)
+    if args.locomotortest:
+        from .selftest.locomotor_test import run as run_locomotor
+
+        return run_locomotor(seed=args.seed)
     if args.probe:
         from .platform.detect import detect
 

@@ -33,7 +33,7 @@ from desktopfly.environment import (
 )
 from desktopfly.platform.base import Backends
 from desktopfly.signals import SignalBuilder
-from desktopfly.sim import BrainSignals, LIFSim, SpikeBus
+from desktopfly.sim import BrainSignals, LIFSim, SimulationClock, SpikeBus
 
 
 def clamp(value: float, low: float, high: float) -> float:
@@ -56,7 +56,13 @@ class Coordinator:
 
         self.sim: LIFSim | None = None
         if data is not None and config.sim.enabled:
-            self.sim = LIFSim(data.circuit, spike_bus=spike_bus, seed=config.sim.seed)
+            self.sim = LIFSim(
+                data.circuit,
+                spike_bus=spike_bus,
+                seed=config.sim.seed,
+                locomotor_circuit=data.locomotor if config.sim.locomotor else None,
+            )
+        self._clock = SimulationClock()
         self._signal_builder = SignalBuilder()
         self._window_sense = WindowSense()
         self._typing = TypingLevel()
@@ -282,10 +288,18 @@ class Coordinator:
     # -- frame --------------------------------------------------------------
 
     def frame(self, dt: float) -> None:
+        """One displayed frame, replayed as whole simulation ticks.
+
+        The entire closed loop runs on the fixed tick, senses included. Stepping
+        only the brain at a fixed rate while sampling the world once per drawn
+        frame would make the fly behave differently on a 60 Hz and a 144 Hz
+        display, which is the bug this shape exists to prevent.
+        """
         if self.paused:
             return
-        dt = min(k.MAX_FRAME_DT_S, max(0.0, dt))
+        self._clock.advance(min(k.MAX_FRAME_DT_S, max(0.0, dt)), self._advance)
 
+    def _advance(self, dt: float) -> None:
         self._pointer_timer += dt
         pointer_interval = 1.0 / max(1.0, self.config.senses.pointer_poll_hz)
         if self._pointer_timer >= pointer_interval:
@@ -322,7 +336,10 @@ class Coordinator:
         typing = self._typing.update(time.monotonic() - self._last_key_time)
         sim.air_puff = max(puff, typing * k.TYPING_AIR_PUFF)
 
-        # Body to brain: leg proprioception from the gait the fly is walking.
+        # Body to brain. With the nerve cord present this is real joint and
+        # contact feedback; the gait phase below is the fallback the ascending
+        # neurons get when there is no cord.
+        sim.leg_feedback = first.leg_feedback
         sim.gait_drive = first.walking_intensity
         sim.gait_phase = first.gait_phase
 
@@ -336,7 +353,7 @@ class Coordinator:
         self._loom_override = max(0.0, self._loom_override - dt * k.ESCAPE_TEST_DECAY_PER_S)
 
         self._sim_ms_accumulator += dt * 1000
-        steps = min(self.config.sim.max_step_ms, int(self._sim_ms_accumulator))
+        steps = min(self.config.sim.max_step_ms, int(self._sim_ms_accumulator + 1e-6))
         self._sim_ms_accumulator -= steps
         sim.step(steps)
 

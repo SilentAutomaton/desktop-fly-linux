@@ -41,4 +41,5 @@ class SignalBuilder:
             groom_drive=sim.rate_groom * k.GROOM_DRIVE_PER_HZ,
             wing_drive=clamp(sim.rate_escape_wing * k.WING_DRIVE_PER_HZ, 0.0, k.WING_DRIVE_LIMIT),
             arousal=clamp(sim.rate_population * k.AROUSAL_PER_HZ, 0.0, 1.0),
+            leg_commands=sim.locomotor.commands if sim.locomotor is not None else None,
         )
