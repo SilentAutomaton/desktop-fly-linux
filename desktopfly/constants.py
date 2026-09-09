@@ -353,6 +353,12 @@ WING_STROKE_ROLL: Final = 0.175  # rad of sweep either side of the held spread
 WING_RAISE_THRESHOLD: Final = 0.7  # escape-DN rate that raises the wings on foot
 WING_RAISE_LERP: Final = 8.0
 
+# The wing cases of a beetle form. Display only: they hold a steady open angle
+# rather than buzzing along with the hindwings, the way a real beetle flies.
+ELYTRA_LERP: Final = 10.0
+ELYTRA_YAW: Final = 0.62  # rad, fully open
+ELYTRA_LIFT: Final = 0.85
+
 BREATHE_AWAKE: Final = (3.0, 0.03)  # rad/s, amplitude
 BREATHE_ASLEEP: Final = (1.1, 0.05)  # slower and deeper
 

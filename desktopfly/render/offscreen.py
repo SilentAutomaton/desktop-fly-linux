@@ -8,6 +8,7 @@ the frame is drawn into a framebuffer object and read back.
 from __future__ import annotations
 
 import ctypes
+import math
 from collections.abc import Callable
 from pathlib import Path
 
@@ -15,8 +16,17 @@ import numpy as np
 import numpy.typing as npt
 from OpenGL import EGL, GL
 
+from desktopfly.constants import SIMULATION_TICK_S
+from desktopfly.geometry import BodyForm
+from desktopfly.sim import BrainSignals
+
 # Mesa's surfaceless platform: an EGL display backed by no window system at all.
 EGL_PLATFORM_SURFACELESS_MESA = 0x31DD
+
+# The top-down rig: half the view is 30 world units, matching the orthographic
+# scale upstream uses for the same shot.
+TOP_DOWN_HALF_EXTENT = 30.0
+SNAPSHOT_WALK_TICKS = 300
 
 
 class OffscreenContext:
@@ -129,35 +139,95 @@ def render_to_png(width: int, height: int, draw: Callable[[], None], path: Path)
         save_png(context.read_pixels(), path)
 
 
-def snapshot_fly(path: Path, size: int = 720) -> None:
-    """Port of runSnapshot in main.swift: a close-up of the body, over its shoulder."""
+def snapshot_fly(
+    path: Path,
+    size: int = 720,
+    form: BodyForm = BodyForm.FLY,
+    top_down: bool = False,
+    flying: bool = False,
+    walking: bool = False,
+) -> None:
+    """Port of runSnapshot in main.swift.
+
+    The default is upstream's three-quarter close-up. `top_down` reproduces the
+    overlay's own view instead - orthographic, straight down, same key light -
+    which is the only view a user ever sees and therefore the one to check body
+    geometry against.
+    """
     import numpy as np
 
-    from desktopfly.behavior import Fly
+    from desktopfly.behavior import Fly, State
     from desktopfly.render import gl
 
-    with OffscreenContext(size, size) as context:
-        renderer = gl.Renderer()
-        renderer.initialise()
-        renderer.resize(size, size)
-        renderer.ambient = gl.SNAPSHOT_AMBIENT
-        renderer.key = gl.SNAPSHOT_KEY_INTENSITY
-        renderer.key_euler = gl.SNAPSHOT_KEY_EULER
+    bounds = (1400.0, 1400.0)
+    fly = Fly((0.0, 0.0), form=form)
+    fly.heading = np.pi / 2
 
-        fly = Fly((0.0, 0.0))
+    if walking:
+        _walk_awhile(fly, bounds)
+    if flying:
+        fly.state = State.IDLE
+        fly.start_flight(bounds, effort=0.9)
+        for _ in range(40):
+            if fly.state is not State.FLYING:
+                break
+            fly.update(1.0 / 60.0, bounds, None, BrainSignals())
+        fly.x, fly.y = 0.0, 0.0
         fly.heading = np.pi / 2
+    if not walking:
         # Upstream's pose: a mid-stride tripod, so the legs are not all identical.
         for index, leg in enumerate(fly.model.legs):
             leg.angle = [0.25, -0.2, -0.22, 0.28, 0.2, -0.25][index]
             leg.lift = [0.35, 0.0, 0.0, 0.3, 0.0, 0.35][index]
             leg.apply()
-        fly.sync_node()
+    fly.sync_node()
 
-        view_projection = gl.perspective(gl.SNAPSHOT_FOV, 1.0, 1.0, 600.0) @ gl.look_at(
-            gl.SNAPSHOT_CAMERA, (0.0, 0.0, 5.0)
-        )
+    with OffscreenContext(size, size) as context:
+        renderer = gl.Renderer()
+        renderer.initialise()
+        renderer.resize(size, size)
+        if top_down:
+            view_projection = gl.orthographic(TOP_DOWN_HALF_EXTENT, TOP_DOWN_HALF_EXTENT)
+        else:
+            renderer.ambient = gl.SNAPSHOT_AMBIENT
+            renderer.key = gl.SNAPSHOT_KEY_INTENSITY
+            renderer.key_euler = gl.SNAPSHOT_KEY_EULER
+            view_projection = gl.perspective(gl.SNAPSHOT_FOV, 1.0, 1.0, 600.0) @ gl.look_at(
+                gl.SNAPSHOT_CAMERA, (0.0, 0.0, 5.0)
+            )
         renderer.draw([fly.node], [], view_projection=view_projection)
         save_png(context.read_pixels(), path)
+
+
+def _walk_awhile(fly: object, bounds: tuple[float, float]) -> None:
+    """Drive the pose from live motor neurons, so the legs are where they land.
+
+    A hand-written stride is a drawing of a fly walking; this is the body doing
+    it, which is the only way a snapshot can check the motor path at all.
+    """
+    from desktopfly.behavior import State
+    from desktopfly.dataset import load_brain_data
+    from desktopfly.signals import SignalBuilder
+    from desktopfly.sim import LIFSim
+
+    data = load_brain_data()
+    if data is None:
+        raise SystemExit("no data/ — run etl.py first")
+    sim = LIFSim(data.circuit, locomotor_circuit=data.locomotor)
+    builder = SignalBuilder()
+    fly.state = State.WALKING  # type: ignore[attr-defined]
+    sim.stimulate(sim.groups.forward, 0.15, 3000)
+    for frame in range(SNAPSHOT_WALK_TICKS):
+        sim.leg_feedback = fly.leg_feedback  # type: ignore[attr-defined]
+        sim.step(9 if frame % 3 == 2 else 8)
+        signals = builder.make(sim, SIMULATION_TICK_S)
+        signals.escape = False
+        signals.groom_drive = 0.0
+        signals.nervous = 0.0
+        signals.arousal = 0.0
+        fly.update(SIMULATION_TICK_S, bounds, None, signals)  # type: ignore[attr-defined]
+    fly.x, fly.y = 0.0, 0.0  # type: ignore[attr-defined]
+    fly.heading = math.pi / 2  # type: ignore[attr-defined]
 
 
 def snapshot_brain(path: Path, width: int = 720, height: int = 560) -> None:

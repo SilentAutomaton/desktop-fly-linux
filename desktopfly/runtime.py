@@ -21,6 +21,7 @@ from gi.repository import GLib, Gtk  # noqa: E402
 from desktopfly.app import Coordinator  # noqa: E402
 from desktopfly.config import Config  # noqa: E402
 from desktopfly.dataset import load_brain_data  # noqa: E402
+from desktopfly.geometry import BodyForm  # noqa: E402
 from desktopfly.platform.base import Backends  # noqa: E402
 from desktopfly.platform.detect import detect  # noqa: E402
 from desktopfly.platform.gtk_brain_window import BrainWindow  # noqa: E402
@@ -71,6 +72,7 @@ class Application:
             "pause": self._toggle_pause,
             "resume": self._resume,
             "brain": self._toggle_brain,
+            "body": self._toggle_body,
             "escape": self.coordinator.escape_test,
             "scare": self.coordinator.scare_all,
             "add-fly": self.coordinator.add_fly,
@@ -80,6 +82,7 @@ class Application:
         }
         provenance = self.data.describe() if self.data else "no FlyWire data"
         self.tray = Tray(self.commands, provenance)
+        self.tray.set_body(self.coordinator.form is BodyForm.BEETLE)
         if not self.tray.available:
             log.info("no tray host answered — drive the fly with `desktop-fly ctl <command>`")
 
@@ -135,6 +138,10 @@ class Application:
     def _toggle_brain(self) -> None:
         if self.brain is not None:
             self.brain.toggle()
+
+    def _toggle_body(self) -> None:
+        self.coordinator.toggle_body()
+        self.tray.set_body(self.coordinator.form is BodyForm.BEETLE)
 
     def quit(self) -> None:
         Gtk.main_quit()

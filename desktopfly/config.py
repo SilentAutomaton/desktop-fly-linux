@@ -29,6 +29,7 @@ APPLICATION_DIR = "desktop-fly"
 @dataclass
 class FlyConfig:
     count: int = 1  # extra flies use the legacy distance-based behaviour
+    form: str = "fly"  # "fly" or "beetle"; the tray toggles it at runtime
     scale: float = 1.15
     edge_margin: float = 50.0
 

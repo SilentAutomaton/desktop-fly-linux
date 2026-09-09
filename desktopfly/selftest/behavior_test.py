@@ -19,6 +19,7 @@ from desktopfly import constants as k
 from desktopfly.behavior import Fly, State, lag
 from desktopfly.dataset import BrainData, load_brain_data
 from desktopfly.environment import Ledge, circadian_activity
+from desktopfly.geometry import BodyForm
 from desktopfly.selftest import DEFAULT_SEED
 from desktopfly.signals import SignalBuilder
 from desktopfly.sim import BrainSignals, LIFSim
@@ -46,8 +47,12 @@ def _scenario(
     check: Callable[[Fly], bool],
     describe: Callable[[Fly], str],
     setup: Callable[[Fly], None] | None = None,
+    filter_signals: Callable[[BrainSignals], None] | None = None,
     seed: int | None = None,
 ) -> None:
+    # Reseeded from the check's own name, so one check cannot move the ones
+    # after it and a single flaky result stays a single flaky result.
+    random.seed(f"{seed}:{name}")
     sim = LIFSim(data.circuit, seed=seed)
     builder = SignalBuilder()
     fly = Fly((0.0, 0.0))
@@ -65,6 +70,8 @@ def _scenario(
     for _ in range(int(hold / DT)):
         sim.step(round(DT * 1000))
         signals = builder.make(sim, DT)
+        if filter_signals is not None:
+            filter_signals(signals)
         fly.update(DT, BOUNDS, None, signals)
         if check(fly):
             passed = True
@@ -116,6 +123,10 @@ def run(seed: int | None = None) -> int:
         "DNp09 stim -> walks, speed rises (capped)",
         stimulate=lambda sim: sim.stimulate(sim.groups.forward, 0.25, 1200),
         hold=1.5,
+        # Background DNg11 can win the idle-state transition and spend this
+        # stimulus window grooming. Isolate the forward response; DNg11's own
+        # grooming response is checked just above.
+        filter_signals=lambda signals: setattr(signals, "groom_drive", 0.0),
         check=lambda fly: fly.state is State.WALKING and 40 < fly.speed < 100,
         describe=lambda fly: f"state={fly.state.value} speed={int(fly.speed)}",
         seed=seed,
@@ -383,7 +394,136 @@ def run(seed: int | None = None) -> int:
         ("circadian curve: siesta + night dips, dawn/dusk peaks", circadian_shape),
         ("body timestep is frame-rate independent", frame_rate_independent),
     ]
+    def elytra_hold_open_in_flight() -> tuple[bool, str]:
+        fly = Fly((0.0, 0.0), form=BodyForm.BEETLE)
+        elytron = fly.model.elytra_left
+        if elytron is None or fly.model.elytra_right is None:
+            return False, "beetle model exposes no elytra"
+        fly.state = State.IDLE
+        for _ in range(20):
+            fly.update(DT, BOUNDS, None, BrainSignals())
+        closed = elytron.euler[2]
+
+        fly.start_flight(BOUNDS, effort=0.8)
+        opened, drive = closed, 0.0
+        low, high, sampled = float("inf"), -float("inf"), 0
+        for frame in range(40):
+            if fly.state is not State.FLYING:
+                break
+            fly.update(DT, BOUNDS, None, BrainSignals())
+            if frame >= 20 and fly.state is State.FLYING:  # past the open-up transient
+                opened, drive = elytron.euler[2], fly.elytra_open
+                low, high, sampled = min(low, opened), max(high, opened), sampled + 1
+        # They must sit at a steady open angle, not buzz with the wing-beat.
+        jitter = high - low if sampled > 1 else 999.0
+        return (
+            drive > 0.8 and abs(opened - closed) > 0.3 and jitter < 0.05,
+            f"closed {closed:.2f} -> open {opened:.2f} rad, drive {drive:.2f}, "
+            f"jitter {jitter:.3f}",
+        )
+
+    def threat_opens_elytra() -> tuple[bool, str]:
+        detail = "no attempt ran"
+        # brain_behavior runs a 0.005/s spontaneous-takeoff lottery while
+        # walking, which ends the window early about 0.3% of the time for
+        # reasons unrelated to the posture. Retry rather than weaken the
+        # no-takeoff assertion: a regression that launches the fly on threat
+        # loses all three attempts.
+        for _ in range(3):
+            fly = Fly((0.0, 0.0), form=BodyForm.BEETLE)
+            elytron = fly.model.elytra_left
+            if elytron is None:
+                return False, "beetle model exposes no elytra"
+            fly.state = State.WALKING
+            fly.speed = 20.0
+            fly.dart_cooldown = 99.0  # isolate the posture from the darting reflex
+            closed = elytron.euler[2]
+            threat = BrainSignals(wing_drive=0.9, walk_drive=0.4)
+            took_off = False
+            for _ in range(40):
+                fly.update(DT, BOUNDS, None, threat)
+                if fly.state is State.FLYING:
+                    took_off = True
+                    break
+            detail = (
+                f"open {fly.elytra_open:.2f}, elytron {closed:.2f} -> "
+                f"{elytron.euler[2]:.2f} rad"
+                + (" (spontaneous takeoff, retried)" if took_off else "")
+            )
+            if not took_off and fly.elytra_open > 0.5 and abs(elytron.euler[2] - closed) > 0.2:
+                return True, detail
+        return False, detail
+
+    def body_swap_keeps_everything() -> tuple[bool, str]:
+        fly = Fly((40.0, -20.0), form=BodyForm.FLY)
+        fly.state = State.WALKING
+        fly.speed = 33.0
+        fly.heading = 1.2
+        for _ in range(30):
+            fly.update(DT, BOUNDS, None, _walk_signals())
+        before = (fly.state, fly.speed, fly.heading, fly.x, fly.y)
+        fly_had_elytra = fly.model.elytra_left is not None
+        old_root = fly.node
+
+        fly.swap_body(BodyForm.BEETLE)
+
+        contract = (
+            len(fly.model.legs) == 6
+            and len(fly.model.folded_wings.children) == 2
+            and fly.model.elytra_left is not None
+            and fly.model.elytra_right is not None
+        )
+        kept = (fly.state, fly.speed, fly.heading, fly.x, fly.y) == before
+        rebuilt = fly.node is not old_root
+        return (
+            contract and kept and rebuilt and not fly_had_elytra,
+            f"contract={contract} state kept={kept} rebuilt={rebuilt} "
+            f"fly form had elytra={fly_had_elytra}",
+        )
+
+    def gait_and_wingbeat(form: BodyForm) -> Callable[[], tuple[bool, str]]:
+        def check() -> tuple[bool, str]:
+            fly = Fly((0.0, 0.0), form=form)
+            fly.state = State.WALKING
+            fly.speed = 40.0
+            start_phase = fly.gait_phase
+            # Amplitude over the window, not one frame: an alternating tripod
+            # puts every leg through zero at the same instant twice a cycle.
+            swing = 0.0
+            for _ in range(30):
+                fly.update(DT, BOUNDS, None, _walk_signals())
+                swing = max(swing, max(abs(leg.angle) for leg in fly.model.legs))
+            gait_moved = fly.gait_phase != start_phase
+
+            fly.state = State.IDLE
+            fly.start_flight(BOUNDS, effort=0.8)
+            low, high = float("inf"), -float("inf")
+            for _ in range(30):
+                if fly.state is not State.FLYING:
+                    break
+                fly.update(DT, BOUNDS, None, BrainSignals())
+                roll = fly.model.folded_wings.children[0].euler[2]
+                low, high = min(low, roll), max(high, roll)
+            return (
+                gait_moved and swing > 0.15 and high - low > 0.25,
+                f"gait moved={'yes' if gait_moved else 'NO'} leg swing {swing:.2f} rad, "
+                f"wing sweep {high - low:.2f} rad",
+            )
+
+        return check
+
+    body_checks += [
+        ("beetle: elytra spread in flight and hold steady", elytra_hold_open_in_flight),
+        ("beetle: threat opens the elytra without takeoff", threat_opens_elytra),
+        ("body swap keeps state, position and the model contract", body_swap_keeps_everything),
+    ]
+    body_checks += [
+        (f"[{form.value}] gait advances and the wings still beat", gait_and_wingbeat(form))
+        for form in (BodyForm.FLY, BodyForm.BEETLE)
+    ]
+
     for name, check in body_checks:
+        random.seed(f"{seed}:{name}")
         ok, detail = check()
         report.record(ok, name, detail)
 

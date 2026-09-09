@@ -15,6 +15,7 @@ COMMANDS = (
     "pause",
     "resume",
     "brain",
+    "body",
     "escape",
     "scare",
     "add-fly",
@@ -53,8 +54,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="MaleCNS circuit, leg mechanics and the loop between them, headless",
     )
     parser.add_argument(
-        "--snapshot", metavar="PATH", help="offscreen render of the fly body, for comparison"
+        "--snapshot", metavar="PATH", help="offscreen render of the body, for comparison"
     )
+    parser.add_argument(
+        "--top",
+        action="store_true",
+        help="render the overlay's own top-down view, which is the only one users see",
+    )
+    parser.add_argument("--flying", action="store_true", help="snapshot a body in flight")
+    parser.add_argument(
+        "--walking", action="store_true", help="snapshot a pose driven by live motor neurons"
+    )
+    parser.add_argument("--beetle", action="store_true", help="snapshot the stag-beetle body")
     parser.add_argument("--brainshot", metavar="PATH", help="offscreen render of the brain map")
     parser.add_argument(
         "--seed",
@@ -102,9 +113,16 @@ def main(argv: list[str] | None = None) -> int:
             print(line)
         return 0
     if args.snapshot:
+        from .geometry import BodyForm
         from .render.offscreen import snapshot_fly
 
-        snapshot_fly(Path(args.snapshot))
+        snapshot_fly(
+            Path(args.snapshot),
+            form=BodyForm.BEETLE if args.beetle else BodyForm.FLY,
+            top_down=args.top,
+            flying=args.flying,
+            walking=args.walking,
+        )
         print(f"snapshot written to {args.snapshot}")
         return 0
     if args.brainshot:

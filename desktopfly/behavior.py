@@ -18,7 +18,7 @@ import numpy as np
 
 from . import constants as k
 from .environment import Ledge
-from .geometry import FlyModel, build_fly_model
+from .geometry import BodyForm, FlyModel, build_body
 from .legdynamics import (
     CONTACT_HEIGHT,
     ELEVATION_RANGE,
@@ -87,8 +87,9 @@ def lag(rate: float, dt: float) -> float:
 
 
 class Fly:
-    def __init__(self, position: tuple[float, float]):
-        self.model: FlyModel = build_fly_model()
+    def __init__(self, position: tuple[float, float], form: BodyForm = BodyForm.FLY):
+        self.form = form
+        self.model: FlyModel = build_body(form)
         self.leg_dynamics = SixLegDynamics([leg.geometry for leg in self.model.legs])
         for leg, pose in zip(self.model.legs, self.leg_dynamics.feedback, strict=True):
             leg.apply_feedback(pose)
@@ -137,11 +138,40 @@ class Fly:
         self.pitch = 0.0
         self.flap_phase = 0.0
         self.wing_raise = 0.0  # grounded threat posture
+        self.elytra_open = 0.0  # display only: 0 closed .. 1 fully spread
 
         self._brain_live = False
         self._live_arousal = 0.0
         self._live_wing = 0.0
 
+        self.sync_node()
+
+    def swap_body(self, form: BodyForm) -> None:
+        """Rebuild the geometry in place, keeping every behaviour variable.
+
+        Position, heading, speed, state, gait phase, flight and ledge all
+        survive; only the shapes change. Upstream has to reparent the new root
+        in its scene graph - here the coordinator hands the renderer whatever
+        node the fly currently owns, so there is nothing to re-attach.
+        """
+        if form is self.form:
+            return
+        previous = self.node
+        self.form = form
+        self.model = build_body(form)
+        self.leg_dynamics = SixLegDynamics([leg.geometry for leg in self.model.legs])
+        for leg, pose in zip(self.model.legs, self.leg_dynamics.feedback, strict=True):
+            leg.apply_feedback(pose)
+        self._motor_walking = False
+        self._rendered_leg_state = None
+        self._rendered_motor_control = False
+        self._sensed_leg_feedback = []
+        self.model.root.position = list(previous.position)
+        self.model.root.scale = list(previous.scale)
+        self.model.root.euler = list(previous.euler)
+        flying = self.state is State.FLYING
+        self.model.blur_wing_left.hidden = not flying
+        self.model.blur_wing_right.hidden = not flying
         self.sync_node()
 
     # -- readouts the coordinator feeds back into the brain ------------------
@@ -892,3 +922,22 @@ class Fly:
         self.model.blur_wing_right.hidden = amount == 0.0
         self.model.blur_wing_left.euler = [0.0, 0.0, 0.45 + stroke * 0.2]
         self.model.blur_wing_right.euler = [0.0, 0.0, -0.45 - stroke * 0.2]
+        self._update_elytra(1.0 if flying else self.wing_raise, dt)
+
+    def _update_elytra(self, target: float, dt: float) -> None:
+        """Display only, and only on a body that has wing cases.
+
+        It reads `state is FLYING` and the existing wing_raise; it adds no
+        signal and makes no decision. The cases swing outward and tip up, then
+        hold that angle instead of buzzing along with the hindwings.
+        """
+        left, right = self.model.elytra_left, self.model.elytra_right
+        if left is None or right is None:
+            return
+        self.elytra_open += (target - self.elytra_open) * lag(k.ELYTRA_LERP, dt)
+        if self.elytra_open < 0.001:
+            self.elytra_open = 0.0
+        yaw = k.ELYTRA_YAW * self.elytra_open
+        lift = k.ELYTRA_LIFT * self.elytra_open
+        left.euler = [0.0, lift, -yaw]
+        right.euler = [0.0, -lift, yaw]

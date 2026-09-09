@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from enum import Enum
 
 import numpy as np
 import numpy.typing as npt
@@ -153,6 +154,151 @@ def cone_mesh(
     return _finish(positions, normals, uvs, indices, mat)
 
 
+def box_mesh(width: float, height: float, length: float, mat: Material) -> Mesh:
+    """A box centred on its origin, matching SCNBox's axes: X wide, Y high, Z long.
+
+    # ponytail: no chamfer. SCNBox rounds its edges by a radius the beetle sets
+    # to 0.8; at the overlay's scale that is under a pixel, and adding a chamfer
+    # means a rounded-box generator. Add one if a body ever needs a visible bevel.
+    """
+    hx, hy, hz = width / 2.0, height / 2.0, length / 2.0
+    faces = (
+        ((0.0, 0.0, 1.0), ((-hx, -hy, hz), (hx, -hy, hz), (hx, hy, hz), (-hx, hy, hz))),
+        ((0.0, 0.0, -1.0), ((hx, -hy, -hz), (-hx, -hy, -hz), (-hx, hy, -hz), (hx, hy, -hz))),
+        ((1.0, 0.0, 0.0), ((hx, -hy, hz), (hx, -hy, -hz), (hx, hy, -hz), (hx, hy, hz))),
+        ((-1.0, 0.0, 0.0), ((-hx, -hy, -hz), (-hx, -hy, hz), (-hx, hy, hz), (-hx, hy, -hz))),
+        ((0.0, 1.0, 0.0), ((-hx, hy, hz), (hx, hy, hz), (hx, hy, -hz), (-hx, hy, -hz))),
+        ((0.0, -1.0, 0.0), ((-hx, -hy, -hz), (hx, -hy, -hz), (hx, -hy, hz), (-hx, -hy, hz))),
+    )
+    positions, normals, uvs, indices = [], [], [], []
+    for normal, corners in faces:
+        base = len(positions)
+        corner_uvs = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+        for corner, uv in zip(corners, corner_uvs, strict=True):
+            positions.append(corner)
+            normals.append(normal)
+            uvs.append(uv)
+        indices += [base, base + 1, base + 2, base, base + 2, base + 3]
+    return _finish(positions, normals, uvs, indices, mat)
+
+
+def bezier_outline(
+    start: tuple[float, float],
+    segments: tuple[tuple[tuple[float, float], tuple[float, float], tuple[float, float]], ...],
+    steps: int = 12,
+) -> list[tuple[float, float]]:
+    """Flatten a chain of cubic beziers into a polygon.
+
+    Stands in for NSBezierPath's own flattening. Upstream asks for a flatness of
+    0.1 units; at these sizes a fixed subdivision is well inside that.
+    """
+    points = [start]
+    for control_a, control_b, end in segments:
+        origin = points[-1]
+        for step in range(1, steps + 1):
+            t = step / steps
+            u = 1.0 - t
+            points.append(
+                (
+                    u**3 * origin[0]
+                    + 3 * u * u * t * control_a[0]
+                    + 3 * u * t * t * control_b[0]
+                    + t**3 * end[0],
+                    u**3 * origin[1]
+                    + 3 * u * u * t * control_a[1]
+                    + 3 * u * t * t * control_b[1]
+                    + t**3 * end[1],
+                )
+            )
+    return points
+
+
+def extruded_mesh(outline: list[tuple[float, float]], depth: float, mat: Material) -> Mesh:
+    """A closed outline in XY, extruded along Z and centred on z = 0.
+
+    Replaces SCNShape. The elytra swing right open, so a zero-thickness sheet
+    would show its edge; the side wall is what makes it read as a shell.
+
+    # ponytail: fanned from the centroid, which is correct for any star-shaped
+    # outline and both of the ones this fork draws. A concave body part would
+    # need a real triangulator.
+    """
+    # A mirrored outline is wound the other way round, which would light one
+    # elytron off its back face and leave the pair visibly different shades.
+    # Orient every outline counter-clockwise so the front face is always front.
+    area = sum(
+        outline[i][0] * outline[(i + 1) % len(outline)][1]
+        - outline[(i + 1) % len(outline)][0] * outline[i][1]
+        for i in range(len(outline))
+    )
+    if area < 0:
+        outline = outline[::-1]
+
+    front, back = depth / 2.0, -depth / 2.0
+    cx = sum(x for x, _ in outline) / len(outline)
+    cy = sum(y for _, y in outline) / len(outline)
+    positions, normals, uvs, indices = [], [], [], []
+
+    for z, normal, flip in ((front, (0.0, 0.0, 1.0), False), (back, (0.0, 0.0, -1.0), True)):
+        centre = len(positions)
+        positions.append((cx, cy, z))
+        normals.append(normal)
+        uvs.append((0.5, 0.5))
+        for x, y in outline:
+            positions.append((x, y, z))
+            normals.append(normal)
+            uvs.append((0.5, 0.5))
+        for step in range(len(outline)):
+            a = centre + 1 + step
+            b = centre + 1 + (step + 1) % len(outline)
+            indices += [centre, b, a] if flip else [centre, a, b]
+
+    for step in range(len(outline)):
+        x0, y0 = outline[step]
+        x1, y1 = outline[(step + 1) % len(outline)]
+        edge = math.hypot(x1 - x0, y1 - y0)
+        if edge < 1e-9:
+            continue
+        normal = ((y1 - y0) / edge, -(x1 - x0) / edge, 0.0)
+        base = len(positions)
+        for corner in ((x0, y0, back), (x1, y1, back), (x1, y1, front), (x0, y0, front)):
+            positions.append(corner)
+            normals.append(normal)
+            uvs.append((0.5, 0.5))
+        indices += [base, base + 1, base + 2, base, base + 2, base + 3]
+    return _finish(positions, normals, uvs, indices, mat)
+
+
+def oval_mesh(
+    rect: tuple[float, float, float, float],
+    mat: Material,
+    rotation: float = 0.0,
+    segments: int = 28,
+) -> Mesh:
+    """A flat oval filling `rect` (x, y, width, height), optionally pre-rotated.
+
+    Only one face is generated: the wing materials are double-sided, so culling
+    is off and a second face would double their alpha and turn them milky.
+    """
+    x, y, width, height = rect
+    cx, cy = x + width / 2.0, y + height / 2.0
+    rx, ry = width / 2.0, height / 2.0
+    cos_r, sin_r = math.cos(rotation), math.sin(rotation)
+
+    def place(px: float, py: float) -> tuple[float, float, float]:
+        return (px * cos_r - py * sin_r, px * sin_r + py * cos_r, 0.0)
+
+    positions, normals, uvs, indices = [place(cx, cy)], [(0.0, 0.0, 1.0)], [(0.5, 0.5)], []
+    for segment in range(segments + 1):
+        angle = 2.0 * math.pi * segment / segments
+        positions.append(place(cx + rx * math.cos(angle), cy + ry * math.sin(angle)))
+        normals.append((0.0, 0.0, 1.0))
+        uvs.append((0.5 + 0.5 * math.cos(angle), 0.5 + 0.5 * math.sin(angle)))
+    for segment in range(segments):
+        indices += [0, 1 + segment, 2 + segment]
+    return _finish(positions, normals, uvs, indices, mat)
+
+
 def wing_mesh(mat: Material, segments: int = 28) -> Mesh:
     """Port of FlyModel.swift wingShape(): a flat oval disc.
 
@@ -164,20 +310,7 @@ def wing_mesh(mat: Material, segments: int = 28) -> Mesh:
     face is generated: the material is double-sided, so culling is off and a
     second face would double the 0.28 alpha and turn the wing milky.
     """
-    cx, cy = 0.0, -16.5 + 16.5 / 2.0
-    rx, ry = 5.2 / 2.0, 16.5 / 2.0
-    positions, normals, uvs, indices = [], [], [], []
-    positions.append((cx, cy, 0.0))
-    normals.append((0.0, 0.0, 1.0))
-    uvs.append((0.5, 0.5))
-    for segment in range(segments + 1):
-        angle = 2.0 * math.pi * segment / segments
-        positions.append((cx + rx * math.cos(angle), cy + ry * math.sin(angle), 0.0))
-        normals.append((0.0, 0.0, 1.0))
-        uvs.append((0.5 + 0.5 * math.cos(angle), 0.5 + 0.5 * math.sin(angle)))
-    for segment in range(segments):
-        indices += [0, 1 + segment, 2 + segment]
-    return _finish(positions, normals, uvs, indices, mat)
+    return oval_mesh((-2.6, -16.5, 5.2, 16.5), mat, segments=segments)
 
 
 def abdomen_texture() -> npt.NDArray[np.uint8]:
@@ -271,6 +404,10 @@ class FlyModel:
     blur_wing_left: Node
     blur_wing_right: Node
     abdomen: Node
+    # Wing cases, beetle forms only. Display-only nodes: _update_elytra swings
+    # them open, nothing ever reads them back.
+    elytra_left: Node | None = None
+    elytra_right: Node | None = None
     # How far the wings swing out in flight. Body-specific: a beetle keeps a
     # narrower stroke than a fly, whose wings must clear a raised hinge.
     wing_flight_spread: float = 0.625
@@ -344,6 +481,28 @@ LEG_SPECS: tuple[
     (1.0, (3.3, -1.2, 4.5), -0.95, 0.0, False, 5.8, 7.0, 4.6),
     (-1.0, (-3.3, -1.2, 4.5), -0.95, 0.5, False, 5.8, 7.0, 4.6),
 )
+
+
+class BodyForm(Enum):
+    """Which body to build. Purely cosmetic.
+
+    Every form satisfies the same FlyModel contract - six legs, folded wings
+    with exactly two children, the two blur discs and an abdomen - so nothing in
+    the behaviour layer ever branches on which one is on screen.
+    """
+
+    FLY = "fruit fly"
+    BEETLE = "stag beetle"
+
+
+def build_body(form: BodyForm) -> FlyModel:
+    if form is BodyForm.BEETLE:
+        # Imported here rather than at the top: beetle.py builds its body from
+        # this module's meshes, so importing it eagerly would be a cycle.
+        from .beetle import build_beetle_model
+
+        return build_beetle_model()
+    return build_fly_model()
 
 
 def build_fly_model() -> FlyModel:

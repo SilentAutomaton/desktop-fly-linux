@@ -49,6 +49,8 @@ class Tray:
         self._add_separator()
         self._pause_item = self._add_command("Pause", "pause")
         self._add_command("Show / Hide Brain", "brain")
+        # The item offers the other form, so it reads as an action.
+        self._body_item = self._add_command("Body: Stag Beetle", "body")
         self._add_command("Escape Test (loom)", "escape")
         self._add_command("Move to Next Output", "next-output")
         self._add_separator()
@@ -70,6 +72,10 @@ class Tray:
     def set_paused(self, paused: bool) -> None:
         if self.available:
             self._pause_item.set_label("Resume" if paused else "Pause")
+
+    def set_body(self, beetle: bool) -> None:
+        if self.available:
+            self._body_item.set_label("Body: Fruit Fly" if beetle else "Body: Stag Beetle")
 
     def _add_label(self, text: str) -> Gtk.MenuItem:
         item = Gtk.MenuItem(label=text)

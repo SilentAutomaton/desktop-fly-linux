@@ -10,6 +10,7 @@
 
 [fly]
 count = 1                 # extra flies carry no brain and use the legacy behaviour
+form = "fly"              # "fly" or "beetle"; the tray item and `ctl body` swap it
 scale = 1.15              # body size multiplier
 edge_margin = 50          # px kept clear of the output edge when picking a flight target
 
@@ -44,5 +45,6 @@ sleep_idle_any_s = 1800    # idle this long at any hour and it sleeps anyway
 
 [sim]
 enabled = true            # false disables the connectome entirely: legacy behaviour only
+locomotor = true          # false falls back to the scripted gait, no MaleCNS nerve cord
 max_step_ms = 50          # cap on simulated milliseconds per frame, so a stall cannot burst
 # seed = 1                # fix the network's random baselines and noise, for reproducible runs

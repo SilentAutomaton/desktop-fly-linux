@@ -31,6 +31,7 @@ from desktopfly.environment import (
     is_sleepy,
     thermal_tempo,
 )
+from desktopfly.geometry import BodyForm
 from desktopfly.platform.base import Backends
 from desktopfly.signals import SignalBuilder
 from desktopfly.sim import BrainSignals, LIFSim, SimulationClock, SpikeBus
@@ -67,6 +68,7 @@ class Coordinator:
         self._window_sense = WindowSense()
         self._typing = TypingLevel()
 
+        self.form = BodyForm.BEETLE if config.fly.form == "beetle" else BodyForm.FLY
         self.flies: list[Fly] = []
         for _ in range(max(1, config.fly.count)):
             self.add_fly()
@@ -116,7 +118,11 @@ class Coordinator:
         half_width, half_height = width / 2 - 100, height / 2 - 100
         self.flies.append(
             Fly(
-                (random.uniform(-half_width, half_width), random.uniform(-half_height, half_height))
+                (
+                    random.uniform(-half_width, half_width),
+                    random.uniform(-half_height, half_height),
+                ),
+                form=self.form,
             )
         )
 
@@ -136,6 +142,12 @@ class Coordinator:
 
     def toggle_pause(self) -> None:
         self.paused = not self.paused
+
+    def toggle_body(self) -> None:
+        """Swap every fly to the other body form, keeping their behaviour."""
+        self.form = BodyForm.FLY if self.form is BodyForm.BEETLE else BodyForm.BEETLE
+        for fly in self.flies:
+            fly.swap_body(self.form)
 
     # -- senses -------------------------------------------------------------
 
