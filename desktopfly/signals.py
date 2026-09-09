@@ -7,6 +7,7 @@ and by the behaviour test suite, so both exercise the identical mapping.
 from __future__ import annotations
 
 from . import constants as k
+from .behavior import lag
 from .sim import BrainSignals, LIFSim
 
 
@@ -23,7 +24,9 @@ class SignalBuilder:
         # The connectome carries a standing left/right asymmetry in the steering
         # neurons. Adapting it out over ~8 s keeps steady walking straight, so
         # only transient asymmetries - a threat on one side, a click - steer.
-        self._dna_baseline += (difference - self._dna_baseline) * min(1.0, dt / k.DNA_ADAPT_TAU_S)
+        self._dna_baseline += (difference - self._dna_baseline) * lag(
+            1.0 / k.DNA_ADAPT_TAU_S, dt
+        )
 
         return BrainSignals(
             escape=sim.consume_gf(),

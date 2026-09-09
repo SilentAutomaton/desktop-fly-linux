@@ -284,7 +284,7 @@ Two honest gaps, neither of which is worked around:
 ```sh
 desktop-fly --probe          # which backends were chosen, and what each reads
 desktop-fly --simtest        # circuit invariants: GF silent at rest, 4 ms loom latency, …
-desktop-fly --behaviortest   # 17 end-to-end checks: stimulate neurons -> body reacts
+desktop-fly --behaviortest   # end-to-end checks: stimulate neurons -> body reacts
 desktop-fly --snapshot f.png # offscreen fly render
 desktop-fly --brainshot b.png # offscreen brain render
 ```

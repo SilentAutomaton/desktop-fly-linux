@@ -1,13 +1,14 @@
-"""Seventeen end-to-end checks: stimulate real neurons, watch the body react.
+"""End-to-end checks: stimulate real neurons, watch the body react.
 
 Port of runBehaviorTest in main.swift. Seven scenarios drive the network and
-assert what the fly does; ten body checks drive the body directly with
-hand-built signals and assert the mechanics. Together with sim_test they are
-the acceptance criteria for this port.
+assert what the fly does; the body checks drive the body directly with
+hand-built signals and assert the mechanics. Together with sim_test and
+locomotor_test they are the acceptance criteria for this port.
 """
 
 from __future__ import annotations
 
+import math
 import random
 import sys
 from collections.abc import Callable
@@ -15,7 +16,7 @@ from collections.abc import Callable
 import numpy.typing as npt
 
 from desktopfly import constants as k
-from desktopfly.behavior import Fly, State
+from desktopfly.behavior import Fly, State, lag
 from desktopfly.dataset import BrainData, load_brain_data
 from desktopfly.environment import Ledge, circadian_activity
 from desktopfly.selftest import DEFAULT_SEED
@@ -328,6 +329,41 @@ def run(seed: int | None = None) -> int:
             f"{max_scale_step:.2f}, dz {max_z_step:.1f}",
         )
 
+    def frame_rate_independent() -> tuple[bool, str]:
+        """Guards both halves of the frame-rate fix.
+
+        Before it the first assert was off by 27% at the 50 ms frame cap, and
+        the third differed by sqrt(2) between a 60 Hz and a 120 Hz display.
+        """
+        # 1. at the rate the constants were tuned at, lag() must reproduce the
+        #    old `min(1, k * dt)` exactly, or this stops being a pure bug fix.
+        exact = all(
+            abs(lag(rate, 1 / k.TUNED_HZ) - rate / k.TUNED_HZ) < 1e-12
+            for rate in (0.05, 0.9, 3, 4, 6, 8, 9, 10)
+        )
+        # 2. a first-order lag must land in the same place however it is cut up.
+        fine = 0.0
+        for _ in range(8):
+            fine += (1 - fine) * lag(10, 0.1 / 8)
+        coarse = (1 - 0.0) * lag(10, 0.1)
+        # 3. the heading random walk must have the same spread at any frame rate.
+        def spread(dt: float) -> float:
+            total = 0.0
+            for _ in range(4000):
+                heading, elapsed = 0.0, 0.0
+                while elapsed < 2.0:
+                    heading += random.uniform(-1.0, 1.0) * k.WANDER_JITTER * math.sqrt(dt)
+                    elapsed += dt
+                total += heading * heading
+            return math.sqrt(total / 4000)
+
+        fast, faster = spread(1 / 60), spread(1 / 120)
+        return (
+            exact and abs(fine - coarse) < 1e-6 and abs(fast - faster) / fast < 0.10,
+            f"60Hz exact={'yes' if exact else 'NO'}, lag 8x12.5ms {fine:.6f} vs "
+            f"1x100ms {coarse:.6f}, wander sd {fast:.3f} @60Hz vs {faster:.3f} @120Hz",
+        )
+
     def circadian_shape() -> tuple[bool, str]:
         night, dawn = circadian_activity(3), circadian_activity(9)
         siesta, dusk = circadian_activity(14), circadian_activity(18)
@@ -345,6 +381,7 @@ def run(seed: int | None = None) -> int:
         ("threat while grounded raises the wings (no takeoff)", threat_raises_wings),
         ("landing is smooth: no scale/height snap at touchdown", landing_is_smooth),
         ("circadian curve: siesta + night dips, dawn/dusk peaks", circadian_shape),
+        ("body timestep is frame-rate independent", frame_rate_independent),
     ]
     for name, check in body_checks:
         ok, detail = check()

@@ -45,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--behaviortest",
         action="store_true",
-        help="17 end-to-end neuron-to-body checks, headless, exit 0 on pass",
+        help="end-to-end neuron-to-body checks, headless, exit 0 on pass",
     )
     parser.add_argument(
         "--snapshot", metavar="PATH", help="offscreen render of the fly body, for comparison"

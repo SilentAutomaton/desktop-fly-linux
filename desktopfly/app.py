@@ -20,7 +20,7 @@ import time
 from datetime import datetime
 
 from desktopfly import constants as k
-from desktopfly.behavior import Fly, State
+from desktopfly.behavior import Fly, State, lag
 from desktopfly.config import Config
 from desktopfly.dataset import BrainData
 from desktopfly.environment import (
@@ -69,6 +69,8 @@ class Coordinator:
         self._mouse: tuple[float, float] | None = None
         self._previous_mouse: tuple[float, float] | None = None
         self._mouse_velocity = (0.0, 0.0)
+        self._mouse_velocity_raw = (0.0, 0.0)
+        self._mouse_sample_dt = 0.0
         self._window_loom_left = 0.0
         self._window_loom_right = 0.0
         self._loom_override = 0.0
@@ -227,17 +229,30 @@ class Coordinator:
         if self._mouse is None:
             return (0.0, 0.0, 0.0)
         if self._previous_mouse is not None and dt > 0:
-            velocity = (
-                (self._mouse[0] - self._previous_mouse[0]) / dt,
-                (self._mouse[1] - self._previous_mouse[1]) / dt,
-            )
+            # The pointer is polled on its own timer, an order of magnitude
+            # slower than this runs, so most frames see the cursor exactly where
+            # the last one did. Measure velocity over the interval that actually
+            # elapsed between two samples, and re-measure once the cursor has
+            # been quiet for one poll period so a stopped cursor decays to zero
+            # rather than holding its last speed.
+            self._mouse_sample_dt += dt
+            if self._mouse != self._previous_mouse or self._mouse_sample_dt >= k.MOUSE_RESAMPLE_S:
+                self._mouse_velocity_raw = (
+                    (self._mouse[0] - self._previous_mouse[0]) / self._mouse_sample_dt,
+                    (self._mouse[1] - self._previous_mouse[1]) / self._mouse_sample_dt,
+                )
+                self._previous_mouse = self._mouse
+                self._mouse_sample_dt = 0.0
+            smoothing = lag(k.MOUSE_VELOCITY_LAG_K, dt)
             self._mouse_velocity = (
                 self._mouse_velocity[0]
-                + (velocity[0] - self._mouse_velocity[0]) * k.MOUSE_VELOCITY_ALPHA,
+                + (self._mouse_velocity_raw[0] - self._mouse_velocity[0]) * smoothing,
                 self._mouse_velocity[1]
-                + (velocity[1] - self._mouse_velocity[1]) * k.MOUSE_VELOCITY_ALPHA,
+                + (self._mouse_velocity_raw[1] - self._mouse_velocity[1]) * smoothing,
             )
-        self._previous_mouse = self._mouse
+        else:
+            self._previous_mouse = self._mouse
+            self._mouse_sample_dt = 0.0
 
         relative = (self._mouse[0] - fly.x, self._mouse[1] - fly.y)
         distance = max(k.LOOM_MIN_DISTANCE, math.hypot(*relative))

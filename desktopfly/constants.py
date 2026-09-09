@@ -9,6 +9,7 @@ User-facing settings (output choice, poll rates, sensor preferences) live in
 config.py instead. What is here is physics, not preference.
 """
 
+import math
 from typing import Final
 
 # ---------------------------------------------------------------------------
@@ -116,7 +117,15 @@ LOOM_FALLOFF_PX: Final = 800.0
 LOOM_NEAR_PX: Final = 130.0  # a cursor parked this close is simply a big object
 LOOM_NEAR_WEIGHT: Final = 0.5
 LOOM_EYE_FLOOR: Final = 0.12  # neither eye ever sees nothing
-MOUSE_VELOCITY_ALPHA: Final = 0.4
+# The cursor is polled on its own timer while the loom is recomputed every
+# frame, so velocity must be measured over the real interval between samples,
+# not over the frame. Dividing by the frame time turned one poll into a spike
+# whose height scaled with the refresh rate, which made the same gesture reach
+# LC4/LPLC2 - and therefore the giant fiber - differently on a 60 Hz and a
+# 144 Hz display. 24/60 is the fixed 0.4 the filter used to apply per frame.
+MOUSE_VELOCITY_LAG_K: Final = 24.0
+MOUSE_RESAMPLE_S: Final = 1.0 / 30.0  # re-measure this often even when quiet,
+#                                       so a stopped cursor decays to zero
 
 AIR_PUFF_SPEED_PX_S: Final = 1500.0  # cursor speed that counts as a full gust
 AIR_PUFF_FALLOFF_PX: Final = 500.0
@@ -151,6 +160,13 @@ MAX_FRAME_DT_S: Final = 0.05
 # ---------------------------------------------------------------------------
 # Body — port of FlyModel.swift
 # ---------------------------------------------------------------------------
+
+# The rate every constant below was tuned at. The body used to advance by
+# `min(1, k * dt)` per frame, which is a straight line drawn through a decay
+# curve: it matches the tuned value only at 60 Hz and drifts everywhere else.
+# behavior.lag() restores the geometric decay those constants already imply,
+# and this is the rate at which it must reproduce them exactly.
+TUNED_HZ: Final = 60.0
 
 FLY_SCALE: Final = 1.15
 EDGE_MARGIN: Final = 50.0  # px kept clear of the output edge when picking targets
@@ -233,6 +249,10 @@ GAIT_STANCE_FRACTION: Final = 0.6
 GAIT_LIFT: Final = 0.55
 GAIT_BOB_Z: Final = 0.35
 
+LEG_GROOM_RELAX_LERP: Final = 8.0  # the four legs not doing the grooming
+LEG_TUCK_LERP: Final = 6.0  # legs folding up in flight
+LEG_REST_LERP: Final = 10.0  # legs settling back down when idle
+
 WING_BEAT_BASE_HZ: Final = 14.0
 WING_BEAT_EFFORT_HZ: Final = 10.0
 WING_RAISE_THRESHOLD: Final = 0.7  # escape-DN rate that raises the wings on foot
@@ -253,6 +273,15 @@ LEDGE_LOST_DISTANCE: Final = 40.0  # the edge moved this far: the ground vanishe
 
 FREE_WANDER: Final = 1.6  # rad/s of heading noise while walking the desktop
 BOUNDARY_STEER_LERP: Final = 4.0
+
+# The heading noise above is a random walk, and a random walk's variance grows
+# with dt, not with dt squared. Spending it as `rnd * WANDER * dt` therefore
+# made the fly measurably twitchier on a 60 Hz display than on a 120 Hz one:
+# 0.168 rad of spread over 2 s against 0.119. Spending it as
+# `rnd * JITTER * sqrt(dt)` is frame-rate independent, and dividing by
+# sqrt(TUNED_HZ) reproduces the original 60 Hz spread exactly.
+WANDER_JITTER: Final = FREE_WANDER / math.sqrt(TUNED_HZ)  # rad/sqrt(s)
+LEDGE_JITTER: Final = LEDGE_WANDER / math.sqrt(TUNED_HZ)  # rad/sqrt(s)
 
 # ---------------------------------------------------------------------------
 # Desktop senses — port of Environment.swift

@@ -48,6 +48,31 @@ def smoothstep(t: float) -> float:
     return x * x * (3 - 2 * x)
 
 
+def lag(rate: float, dt: float) -> float:
+    """The frame-rate-independent form of the `min(1, k * dt)` idiom.
+
+    Port of FlyModel.swift lag(). Used for both first-order lags and per-frame
+    event probabilities, so `rate` keeps its original per-second meaning and
+    every call site keeps its original constant. (Upstream calls it `k`; here
+    that name already belongs to the constants module.)
+
+    At dt = 1/60 this returns exactly rate/60, the value the constants were
+    tuned against, so 60 Hz is unchanged. Away from it the result follows the
+    geometric decay those constants already imply rather than a straight line:
+    at the 50 ms frame cap the old form converged 27% too fast (0.50 against
+    0.39 for rate = 10), which is the visible pop when frames drop.
+
+    Deliberately not `1 - exp(-rate * dt)`. Both are frame-rate independent,
+    but the exponential is a different continuous process and would move the
+    60 Hz behaviour by 2% at rate = 3 and 8% at rate = 10. This form leaves
+    60 Hz alone, and the behaviour suite asserts that it does.
+    """
+    per_frame = min(1.0, rate / k.TUNED_HZ)
+    if per_frame >= 1.0:
+        return 1.0
+    return 1.0 - (1.0 - per_frame) ** (k.TUNED_HZ * dt)
+
+
 class Fly:
     def __init__(self, position: tuple[float, float]):
         self.model: FlyModel = build_fly_model()
@@ -232,7 +257,7 @@ class Fly:
         if self.state is State.WALKING:
             if self.dart_timer == 0 and self.backward_timer == 0:
                 target = (k.WALK_SPEED_BASE + s.walk_drive * k.WALK_SPEED_GAIN) * s.tempo
-                self.speed += (target - self.speed) * min(1.0, k.WALK_SPEED_LERP * dt)
+                self.speed += (target - self.speed) * lag(k.WALK_SPEED_LERP, dt)
             if self.ledge is None:
                 self.heading += s.turn_bias * dt  # DNa01/DNa02 steering
 
@@ -241,7 +266,7 @@ class Fly:
         chance = (
             k.FLIGHT_CHANCE_AROUSED if s.arousal > k.FLIGHT_AROUSAL_GATE else k.FLIGHT_CHANCE_CALM
         )
-        if self.state is State.WALKING and random.random() < chance * dt:
+        if self.state is State.WALKING and random.random() < lag(chance, dt):
             self.start_flight(
                 bounds, effort=k.FLIGHT_EFFORT_BASE + s.arousal * k.FLIGHT_EFFORT_AROUSAL_GAIN
             )
@@ -314,28 +339,28 @@ class Fly:
             ledge = self.ledge
             # Walking an edge means holding a heading of 0 or pi and tracking
             # the edge height; the window may be moving under its feet.
-            self.heading += random.uniform(-1.0, 1.0) * k.LEDGE_WANDER * dt
+            self.heading += random.uniform(-1.0, 1.0) * k.LEDGE_JITTER * math.sqrt(dt)
             along = 0.0 if math.cos(self.heading) >= 0 else math.pi
-            self.heading += angle_difference(self.heading, along) * min(
-                1.0, k.LEDGE_ALIGN_LERP * dt
+            self.heading += angle_difference(self.heading, along) * lag(
+                k.LEDGE_ALIGN_LERP, dt
             )
             self.x += math.cos(self.heading) * self._effective_speed * dt
-            self.y += (ledge.y - self.y) * min(1.0, k.LEDGE_SNAP_LERP * dt)
+            self.y += (ledge.y - self.y) * lag(k.LEDGE_SNAP_LERP, dt)
             if self.x <= ledge.x0 + k.LEDGE_END_MARGIN and math.cos(self.heading) < 0:
                 self.heading = 0.0
             if self.x >= ledge.x1 - k.LEDGE_END_MARGIN and math.cos(self.heading) > 0:
                 self.heading = math.pi
             self.x = clamp(self.x, ledge.x0, ledge.x1)
-            if random.random() < k.LEDGE_LEAVE_CHANCE * dt:
+            if random.random() < lag(k.LEDGE_LEAVE_CHANCE, dt):
                 self.ledge = None
         else:
-            self.heading += random.uniform(-1.0, 1.0) * k.FREE_WANDER * dt
+            self.heading += random.uniform(-1.0, 1.0) * k.WANDER_JITTER * math.sqrt(dt)
             half_width = width / 2 - k.EDGE_MARGIN
             half_height = height / 2 - k.EDGE_MARGIN
             if abs(self.x) > half_width or abs(self.y) > half_height:
                 to_center = math.atan2(-self.y, -self.x)
-                self.heading += angle_difference(self.heading, to_center) * min(
-                    1.0, k.BOUNDARY_STEER_LERP * dt
+                self.heading += angle_difference(self.heading, to_center) * lag(
+                    k.BOUNDARY_STEER_LERP, dt
                 )
             speed = self._effective_speed
             self.x += math.cos(self.heading) * speed * dt
@@ -364,7 +389,7 @@ class Fly:
         for ledge in self.terrain:
             near_x = ledge.x0 - 8 < self.x < ledge.x1 + 8
             near_y = abs(self.y - ledge.y) < k.LEDGE_ATTACH_DISTANCE
-            if near_x and near_y and random.random() < k.LEDGE_ATTACH_CHANCE * dt:
+            if near_x and near_y and random.random() < lag(k.LEDGE_ATTACH_CHANCE, dt):
                 self.ledge = ledge
                 self.heading = 0.0 if math.cos(self.heading) >= 0 else math.pi
                 return
@@ -473,7 +498,7 @@ class Fly:
             self.x = self.flight_to[0] + math.sin(self.time * 26) * 1.2
             self.y = self.flight_to[1] + math.cos(self.time * 22) * 1.0
             self.pitch = clamp(self.altitude * 0.4, 0.0, k.FLARE_PITCH_LIMIT)
-            self.altitude += (0.0 - self.altitude) * min(1.0, k.FLARE_ALTITUDE_LERP * dt)
+            self.altitude += (0.0 - self.altitude) * lag(k.FLARE_ALTITUDE_LERP, dt)
             self._apply_altitude()
             if self.altitude < k.LANDING_ALTITUDE:
                 self.x, self.y = self.flight_to
@@ -512,7 +537,7 @@ class Fly:
             -k.FLIGHT_PITCH_LIMIT,
             k.FLIGHT_PITCH_LIMIT,
         )
-        self.altitude += (target - self.altitude) * min(1.0, k.FLIGHT_ALTITUDE_LERP * dt)
+        self.altitude += (target - self.altitude) * lag(k.FLIGHT_ALTITUDE_LERP, dt)
         self._apply_altitude()
 
     # -- limbs --------------------------------------------------------------
@@ -545,18 +570,18 @@ class Fly:
                     leg.angle = 0.45 + 0.25 * math.sin(self.time * 20 + leg.swing_sign * 1.3)
                     leg.lift = 0.55 + 0.15 * math.sin(self.time * 22)
                 else:
-                    leg.angle += (0.0 - leg.angle) * min(1.0, 8 * dt)
-                    leg.lift += (0.0 - leg.lift) * min(1.0, 8 * dt)
+                    leg.angle += (0.0 - leg.angle) * lag(k.LEG_GROOM_RELAX_LERP, dt)
+                    leg.lift += (0.0 - leg.lift) * lag(k.LEG_GROOM_RELAX_LERP, dt)
                 leg.apply()
         elif self.state is State.FLYING:
             for leg in self.model.legs:
-                leg.angle += (-0.35 - leg.angle) * min(1.0, 6 * dt)
-                leg.lift += (0.5 - leg.lift) * min(1.0, 6 * dt)
+                leg.angle += (-0.35 - leg.angle) * lag(k.LEG_TUCK_LERP, dt)
+                leg.lift += (0.5 - leg.lift) * lag(k.LEG_TUCK_LERP, dt)
                 leg.apply()
         else:
             for leg in self.model.legs:
-                leg.angle += (0.0 - leg.angle) * min(1.0, 10 * dt)
-                leg.lift += (0.0 - leg.lift) * min(1.0, 10 * dt)
+                leg.angle += (0.0 - leg.angle) * lag(k.LEG_REST_LERP, dt)
+                leg.lift += (0.0 - leg.lift) * lag(k.LEG_REST_LERP, dt)
                 leg.apply()
 
     def _update_wings(self, dt: float) -> None:
@@ -566,8 +591,8 @@ class Fly:
                 self._live_wing > k.WING_RAISE_THRESHOLD
                 or (self._brain_live and self.dart_timer > 0)
             )
-            self.wing_raise += ((1.0 if raising else 0.0) - self.wing_raise) * min(
-                1.0, k.WING_RAISE_LERP * dt
+            self.wing_raise += ((1.0 if raising else 0.0) - self.wing_raise) * lag(
+                k.WING_RAISE_LERP, dt
             )
             if self.wing_raise > 0.01:
                 for index, wing in enumerate(self.model.folded_wings.children):
