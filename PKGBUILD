@@ -48,6 +48,6 @@ package() {
   install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
   install -Dm644 data/DATA_LICENSE.md data/LOCOMOTOR_PROVENANCE.md \
     -t "$pkgdir/usr/share/licenses/$pkgname"
-  install -Dm644 README.md DESIGN.md third_party/UPSTREAM.md \
+  install -Dm644 README.md DESIGN.md EVALUATION.md third_party/UPSTREAM.md \
     -t "$pkgdir/usr/share/doc/$pkgname"
 }

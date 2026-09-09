@@ -1,6 +1,6 @@
 # DesktopFly for Linux — design document
 
-Status: design approved, implementation not started.
+Status: implemented, tracking upstream v1.1.0 (`32b00011`).
 Target host: Arch Linux, Hyprland (Wayland). Portable to sway/river/Wayfire, X11, and later
 Windows.
 
@@ -41,11 +41,16 @@ Reference layout of the original (2 829 lines of Swift + Python):
 | upstream file | contents |
 |---|---|
 | `main.swift` | overlay scene, CLI modes, `SignalBuilder`, `Coordinator`, `AppDelegate` |
-| `FlyModel.swift` | procedural fly body + `Fly` behaviour state machine |
-| `Sim.swift` | data loading, `BrainSignals`, `SpikeBus`, `LIFSim` |
+| `FlyModel.swift` | body form switch, procedural fly body + `Fly` behaviour state machine |
+| `BeetleModel.swift` | procedural stag beetle — a second skin for the same contract |
+| `Sim.swift` | data loading, `BrainSignals`, `SpikeBus`, `LIFSim`, `SimulationClock` |
+| `Locomotor.swift` | MaleCNS nerve-cord dynamics, homolog-rate input, motor output |
+| `LegDynamics.swift` | modelled joints, foot contact, and the body motion they cause |
+| `LocomotorTests.swift` | causal checks on the cord → body → sensory loop |
 | `BrainView.swift` | brain window: point clouds, click-to-stimulate, spike flashes |
 | `Environment.swift` | `WindowSense`, circadian curve, user idle, thermal tempo |
 | `etl.py` | raw FlyWire Codex dumps → `data/brain_points.json` + `data/circuit.json` |
+| `etl_malecns.py` | public MaleCNS tables → `data/locomotor_circuit.json` + report |
 
 ### 1.2 Why this fork exists
 
@@ -70,23 +75,31 @@ Linux desktop mechanisms. Two extra goals shape the result:
 
 | taken | how | licence |
 |---|---|---|
-| `etl.py` | **byte-identical**, unmodified | MIT (Denis Shiryaev) |
+| `etl.py`, `etl_malecns.py` | **byte-identical**, unmodified | MIT (Denis Shiryaev) |
 | `data/brain_points.json`, `data/circuit.json`, `data/DATA_LICENSE.md` | **byte-identical**, unmodified | CC BY-NC 4.0 (FlyWire FAFB v783) |
+| `data/locomotor_circuit.json`, `data/locomotor_report.json`, `data/LOCOMOTOR_PROVENANCE.md` | **byte-identical**, unmodified | CC BY 4.0 (MaleCNS v1.0) |
+| MaleCNS nerve-cord dynamics and the leg mechanics it drives | transliterated, **all constants unchanged** | MIT |
+| the stag-beetle body and the form swap | transliterated | MIT |
+| brain-window orbit, zoom, fullscreen and the controls hint | transliterated | MIT |
 | LIF dynamics, weights, delays, baselines, gap-junction boost | transliterated Swift → Python, **all constants unchanged** | MIT |
 | `SignalBuilder` rate→command mapping | transliterated, all clamps unchanged | MIT |
 | `Fly` behaviour state machine, gait, flight, ledges, sleep | transliterated | MIT |
 | procedural body geometry (dimensions, colours, leg table) | transliterated | MIT |
 | brain-window visualisation, click-to-stimulate, role palette | transliterated | MIT |
 | circadian curve, `WindowSense` differ, loom transduction | transliterated | MIT |
-| `--simtest` and `--behaviortest` suites, **thresholds included** | transliterated | MIT |
+| `--simtest`, `--behaviortest` and `--locomotortest` suites, **thresholds included** | transliterated | MIT |
 | upstream README's "what's modelled vs measured" honesty section | carried over, credited | MIT |
 
-Vendored upstream commit: `7014d37d7e252a3f16b173aca9b49f6f6c91d3b9` (2026-08-18).
-Recorded in `third_party/UPSTREAM.md`.
+Vendored upstream commit: `32b00011`, release v1.1.0 (2026-09-05).
+Recorded in `third_party/UPSTREAM.md`, together with three deliberate deviations: upstream's
+`TestRandom` is not ported (it exists to keep its Swift and JavaScript trees producing identical
+streams, and this fork has no JavaScript twin), the `windows/` Electron tree is not ported, and
+upstream's spin/spike-flash fix has nothing to fix here.
 
-Because `data/` is **CC BY-NC 4.0**, the distributed bundle as a whole is non-commercial. The
-code alone stays MIT. `LICENSE` keeps the upstream copyright line and adds the fork's; `README.md`
-carries the full third-party list and both required FlyWire citations.
+`data/` now holds two sources under two licences. Because the FlyWire files are **CC BY-NC 4.0**,
+the distributed bundle as a whole is non-commercial; the MaleCNS files are **CC BY 4.0**; the code
+alone stays MIT. `LICENSE` keeps the upstream copyright line and adds the fork's; `README.md`
+carries the full third-party list and every required citation.
 
 ### 1.4 What is replaced, and why
 
@@ -127,11 +140,24 @@ mechanism · **degrade** = works where the platform allows, documented fallback 
   `arousal`. Every field clamped.
 - `Fly` state machine: walking / idle / grooming / flying / sleeping, hysteresis plus a 0.4 s
   dwell guard on state changes, cooldowns on one-shot actions.
+- A second circuit, also *port*: a 1 045-neuron / 17 224-edge MaleCNS v1.0 nerve-cord subgraph
+  integrated at 1 kHz alongside the brain, driving six muscle channels per leg. Descending rates
+  cross a modelled homologous population-rate interface, cell type for cell type; there is no
+  cross-specimen synapse in either dataset and none is invented.
+- Articulated leg mechanics: three damped joints per leg at a fixed 600 Hz substep, a unilateral
+  ground constraint, and a fit of the rigid-body displacement that keeps supporting feet still.
+  Walking is what falls out of that; there are no gait oscillators.
 - Tripod gait with stance/swing split, backward gait, grooming with the front legs, tucked legs
   in flight, visible wing-beat with motion-blur discs, grounded threat wing-raise, altitude →
-  scale, touchdown flare (never a snap), slow deep breathing while asleep.
-- Body → brain feedback: gait phase and intensity drive the real ascending (proprioceptive)
-  neurons; fast cursor motion drives the sensory (wind) partners.
+  scale, touchdown flare (never a snap), slow deep breathing while asleep. The scripted gait is
+  now the fallback used when the nerve cord is absent or disabled.
+- Body → brain feedback: joint excursion and speed to the chordotonal organs, hip angle to the
+  hair plates, foot load to the campaniform sensilla. Without the cord this degrades to gait phase
+  and intensity into the ascending neurons. Fast cursor motion drives the sensory (wind) partners
+  either way.
+- Two body forms behind one contract. `BodyForm` and `build_body()` pick the geometry; nothing in
+  the behaviour layer branches on which one is on screen, and the swap keeps every behaviour
+  variable.
 - Extra flies: only fly #1 carries the brain; the others use the legacy distance-based
   behaviour, exactly as upstream.
 
@@ -188,12 +214,15 @@ mechanism · **degrade** = works where the platform allows, documented fallback 
                                           │ loom_l, loom_r, air_puff, ledges, tempo…
                       ┌───────────────────▼──────────────────────┐
                       │ sim.py           LIFSim @ 1 kHz          │
+                      │ locomotor.py     MaleCNS cord @ 1 kHz    │
                       │ signals.py       SignalBuilder           │
                       └───────────────────┬──────────────────────┘
-                                          │ BrainSignals
+                                          │ BrainSignals + LegMotorCommand x6
                       ┌───────────────────▼──────────────────────┐
                       │ behavior.py      Fly state machine       │
+                      │ legdynamics.py   joints, contact, motion │
                       │ geometry.py      procedural body meshes  │
+                      │ beetle.py        the second body         │
                       │ scenegraph.py    Node transforms         │
                       └───────────────────┬──────────────────────┘
                                           │ world matrices + meshes
@@ -203,8 +232,11 @@ mechanism · **degrade** = works where the platform allows, documented fallback 
                       └──────────────────────────────────────────┘
 ```
 
-The arrow back up is real and load-bearing: `Fly.gait_phase` and `Fly.walking_intensity` feed
-`LIFSim.gait_drive` / `gait_phase`, closing the body → brain proprioceptive loop.
+The arrow back up is real and load-bearing. `Fly.leg_feedback` — joint angles, joint speeds and
+foot loads read off the *displayed* skeleton — feeds `LIFSim.leg_feedback` and from there the
+cord's own sensory population, closing the body → brain proprioceptive loop through measured
+neurons. `Fly.gait_phase` and `Fly.walking_intensity` still feed `LIFSim.gait_drive` as the
+fallback when there is no cord.
 
 ### 3.2 Module map
 
@@ -216,7 +248,8 @@ desktop-fly/
   config.example.toml    every knob, documented, defaults = upstream behaviour
   pyproject.toml
   etl.py                 upstream, byte-identical
-  data/                  upstream, byte-identical (CC BY-NC 4.0)
+  etl_malecns.py         upstream, byte-identical
+  data/                  upstream, byte-identical (CC BY-NC 4.0 and CC BY 4.0)
   third_party/UPSTREAM.md
   desktopfly/
     __main__.py          entry point
@@ -224,10 +257,13 @@ desktop-fly/
     config.py            tomllib load, XDG lookup, merge over defaults
     constants.py         every tuning constant, annotated with unit + upstream origin
     dataset.py           find and load data/*.json          (Sim.swift findDataDir/loadBrainData)
-    sim.py               BrainSignals, SpikeBus, LIFSim      (Sim.swift)
+    sim.py               BrainSignals, SpikeBus, LIFSim, SimulationClock  (Sim.swift)
+    locomotor.py         LocomotorSim                        (Locomotor.swift)
+    legdynamics.py       LegDynamics, SixLegDynamics         (LegDynamics.swift)
     signals.py           SignalBuilder                       (main.swift)
-    behavior.py          Fly                                 (FlyModel.swift)
-    geometry.py          procedural body meshes              (FlyModel.swift buildFlyModel)
+    behavior.py          Fly, BodyForm handling              (FlyModel.swift)
+    geometry.py          procedural fly meshes, build_body   (FlyModel.swift buildFlyModel)
+    beetle.py            procedural beetle meshes            (BeetleModel.swift)
     scenegraph.py        Node                                (stand-in for SCNNode)
     environment.py       circadian_activity, WindowSense     (Environment.swift)
     app.py               Coordinator, frame loop             (main.swift Coordinator)
@@ -250,6 +286,7 @@ desktop-fly/
     selftest/
       sim_test.py        port of runSimtest
       behavior_test.py   port of runBehaviorTest
+      locomotor_test.py  port of runLocomotorTests
 ```
 
 ### 3.3 Threading and timing
@@ -264,6 +301,15 @@ control-socket handler are all main-loop callbacks, so they cannot interleave. *
 machinery is therefore dropped** — a deliberate simplification, recorded here so nobody
 reintroduces it by cargo cult.
 
+**Everything runs on one fixed clock.** A displayed frame is replayed as whole 120 Hz simulation
+ticks (`sim.SimulationClock`): the senses are sampled, the two circuits step, the motor commands
+come out, the body integrates and the feedback returns, all on the same tick. Advancing only part
+of that at a fixed rate while holding the rest per displayed frame is the same class of bug as the
+`min(1, k * dt)` filters, and `--locomotortest` asserts a 60 Hz and a 120 Hz drive produce
+bit-identical displacement. The leg mechanics subdivides again, to 600 Hz, because the ground
+constraint is resolved per substep and a coarse step lets a toe sink visibly before the substrate
+pushes back.
+
 Two things genuinely leave the main loop and keep their locks:
 
 - `SpikeBus` — the brain window drains it from its own `GLArea` tick, which is still the same
@@ -274,10 +320,16 @@ Two things genuinely leave the main loop and keep their locks:
 
 `LIFSim.stimulate()` keeps its lock; the tray and the control socket call it.
 
-Frame budget on the reference laptop: the LIF step is ~16 numpy passes per 60 Hz frame over
-668-element arrays, measured in tens of microseconds; the body is one fly of ~40 nodes; the
-overlay draws a few thousand triangles. Sim stepping is capped at 50 ms of simulated time per
-frame, as upstream, so a stalled frame cannot produce a burst.
+Frame budget on the reference laptop, measured: **5.5 ms of a 16.7 ms frame at 60 Hz** for the
+whole loop — two 120 Hz ticks of the FlyWire network, the nerve cord (0.8 ms/tick) and the leg
+mechanics (0.6 ms/tick). The body is one fly of ~40 nodes and the overlay draws a few thousand
+triangles. Sim stepping is capped at 50 ms of simulated time per frame, as upstream, so a stalled
+frame cannot produce a burst.
+
+Two things make the cord affordable in Python and neither changes a result: the 48 motor-channel
+means are one gather and one segmented sum rather than 48 small reductions, and the sensory
+transduction is recomputed per new feedback sample rather than per simulated millisecond, which it
+cannot change within.
 
 ### 3.4 Coordinate systems
 
@@ -444,10 +496,12 @@ FlyWire v783 · 23210 somas · circuit 668n/18968e
 ────────────────────────────
 Pause / Resume
 Show / Hide Brain          ← opens the interactive brain map
+Fullscreen Brain           ← and Hide Brain Hint
 Escape Test (loom)
 Move to Next Output        ← shown only when more than one output exists
 Add Fly · Remove Fly
 Scare Flies
+Body: Stag Beetle          ← offers the other form, so it reads as an action
 ────────────────────────────
 Quit
 ```
@@ -490,8 +544,20 @@ Contents, ported from `BrainView.swift`:
 - **The two Giant Fibers** as glowing emissive spheres.
 - **Live spikes**: a 48-node flash pool drained from `SpikeBus` each tick, GF flashes bigger and
   slower, exactly as upstream.
-- **Slow rotation** that pauses while the pointer is inside the window, so a region can be aimed
-  at.
+- **Direct manipulation**: drag to orbit (pitch clamped short of the poles, so anatomical up stays
+  up), scroll to dolly the camera between 9 and 70 units — inside the near and far planes —
+  double-click for fullscreen, and a two-line controls hint in the corner, transparent to the mouse
+  so it cannot eat a stimulation click, dismissible from the tray. A press that travels under 3 px
+  is a click; anything further was an orbit, so aiming and spinning never steal each other's
+  gesture.
+- **Slow ambient rotation** that pauses while the pointer is inside the window, so a region can be
+  aimed at. The flash pool decays regardless, so hovering never stops the activity being aimed at —
+  upstream had to fix that, because its flashes were children of the rotating node and ours are
+  not.
+- Upstream's fullscreen mode carries a pile of AppKit workarounds: a non-activating panel dropped
+  one window level below the overlay, a menu-bar inset on the hint, an overridden frame constraint.
+  None has a Linux counterpart. A GTK toplevel fullscreens normally and the layer-shell overlay is
+  above it by protocol, so the fly still walks across the brain and clicks still reach it.
 - **Click to stimulate**: unproject the click into a ray in brain space, find the nearest circuit
   neuron, take every circuit neuron within 2.2 units (clamped to 6…60), inject 0.25 for 400 ms,
   flash an expanding ring and show the region name. What the fly then does is whatever the real
@@ -641,22 +707,36 @@ and this fork adopts that rule.
 - left-eye-only loom: the DNa left−right rate difference moves the right way;
 - click-stimulation probes: the GF cluster spikes, the DNg11 cluster raises the groom rate.
 
-**`desktop-fly --behaviortest`** — 17 end-to-end checks, stimulate neurons and assert the body
+**`desktop-fly --behaviortest`** — 23 end-to-end checks, stimulate neurons and assert the body
 reacts: GF → flight, DNg11 → grooming, DNp09 → walking with a capped speed, MDN → backward walk
 from idle, DNa-left → counter-clockwise turn, moderate loom → dart or escape, sensory tap →
 startle escape, ledge attach and follow, window closing underfoot → takeoff, sleep → sleeping
 and waking into grooming, thermal tempo scales speed, altitude drives scale and escape flies
 higher than a casual hop, wings actually beat, escape-DN activity mid-flight raises effort,
 grounded threat raises the wings without taking off, landing has no per-frame scale or z snap,
-circadian curve has the right peaks and dips.
+circadian curve has the right peaks and dips; the body timestep is frame-rate independent; the
+elytra of a beetle spread in flight and hold steady rather than buzzing; a threat opens them
+without a takeoff; a body swap preserves state, position and the model contract; and the
+gait/wing-beat pair re-run under both forms.
 
-Both run headless with no display, because the core modules import no GTK and no GL.
+**`desktop-fly --locomotortest`** — 18 checks on the nerve cord, the mechanics and the loop
+between them. Thirteen are causal, and five of those are lesions, because the only way to show a
+movement travelled the path it claims to is to cut the path and watch the movement stop: silence
+the motor pool, cut the synapses, open the feedback loop. The remaining five are transition
+fixtures, each run after 360 ticks of real motor walking rather than from a reset pose, bounding
+how far a joint, a toe, the heading and the pitch may move in one tick across a change of
+behaviour. One of them drags the ledge out from under the fly and requires a takeoff with no
+position jump.
+
+All three run headless with no display, because the core modules import no GTK and no GL.
 
 Beyond the ported suites:
 
 - `--probe` must report the correct backend set on Hyprland, on sway, and under XWayland.
 - `--snapshot` / `--brainshot` produce offscreen renders comparable by eye with the upstream
-  `assets/fly.png` and `assets/brain.png`.
+  `assets/fly.png`, `assets/brain.png` and `assets/beetle.png`. `--top` renders the overlay's own
+  orthographic view, which is the only one a user ever sees and therefore the one worth comparing;
+  `--walking` drives the pose from live motor neurons rather than a hand-written stride.
 - A lint rule asserts that no core module imports `gi`, `OpenGL`, or `desktopfly.platform`.
 
 ---
@@ -701,6 +781,23 @@ the Shell notification area. Nothing in `sim.py`, `signals.py`, `behavior.py`, `
 Each step is one commit, or a small series, with a message naming the upstream file the code
 came from and any deliberate deviation.
 
+### 9.1 Tracking upstream v1.1.0
+
+Upstream's own next release was absorbed in the same shape, one commit per concern:
+
+9. Vendor the MaleCNS data, the second ETL and the split licence.
+10. Frame-rate independence (`behavior.lag`), and the cursor-velocity fix that goes with it.
+11. Measured walking kinematics: body saccades and a constant-duration swing.
+12. The MaleCNS circuit and the leg mechanics; then the wiring and `--locomotortest`.
+13. The eased transitions, and the five transition fixtures that guard them.
+14. The stag-beetle body and the new snapshot modes.
+15. The explorable brain window.
+16. Documentation.
+
+The rule that made this reviewable: `--simtest` builds the network *without* the nerve cord, so
+its numbers must not move at all. Anything that shifts them is a mistake in the port, not a
+feature of the release.
+
 ---
 
 ## 10. Credits
@@ -708,6 +805,16 @@ came from and any deliberate deviation.
 - **[DesktopFly](https://github.com/DenisSergeevitch/desktop-fly)** by **Denis Shiryaev** — the
   original idea, the connectome circuit selection, the simulation tuning, the behaviour model,
   the body geometry, the ETL and the test suites. MIT.
+- **[MaleCNS](https://male-cns.janelia.org/download/)** — the male ventral-nerve-cord connectome
+  the legs are driven by. FlyEM at HHMI Janelia with the University of Cambridge, the MRC
+  Laboratory of Molecular Biology and Google Research. Data under CC BY 4.0, a different licence
+  from the FlyWire files beside it. `data/LOCOMOTOR_PROVENANCE.md` is the authority on what that
+  extraction measures and what it models, and no documentation in this fork may claim more than it
+  does: the graph measures contacts, not effective weights; the sensory tuning, the muscle
+  activation, the body mechanics and the rate transfer between two specimens are modelling
+  choices; and a working anatomical path validates the extraction, never the biology.
+  The anatomical reading of the coxal rotator channels follows the
+  [Azevedo et al. 2024 supplement](https://faculty.washington.edu/tuthill/docs/azevedo24_appendix.pdf).
 - **[FlyWire](https://flywire.ai)** / [Codex](https://codex.flywire.ai) — the FAFB v783
   connectome itself. Neither upstream nor this fork digitised any neuron; every number in
   `data/` is downstream of the following measurements, and the README states the chain in full
@@ -736,7 +843,8 @@ came from and any deliberate deviation.
   (Bidaye et al., Neuron 2020), MDN driving backward walking (Bidaye et al., Science 2014),
   DNa01/DNa02 steering (Rayshubskiy et al.).
 
-Upstream's honesty section is carried over verbatim into the README: the connectome gives
+Upstream's honesty section is carried over into the README, and extended for the nerve cord,
+because a fly with articulated legs invites more belief than it has earned. The connectome gives
 wiring, not physiology. The LIF dynamics, the neurotransmitter signs, the gap-junction boost,
 the synaptic delays and the cursor → looming transduction are standard modelling choices layered
 on the real graph. Everything downstream of the sensory neurons — who connects to whom, and how

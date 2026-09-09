@@ -59,8 +59,8 @@ Two things shaped the rebuild:
   or the renderer changes. [`DESIGN.md`](DESIGN.md) section 8 lists exactly what
   such a module has to provide.
 
-`etl.py` and everything in `data/` are upstream's files, byte for byte, so the
-fly here runs on exactly the same real neurons. See
+Both ETL scripts and everything in `data/` are upstream's files, byte for byte,
+so the fly here runs on exactly the same real neurons. See
 [`third_party/UPSTREAM.md`](third_party/UPSTREAM.md).
 
 ## What's real
@@ -77,6 +77,12 @@ fly here runs on exactly the same real neurons. See
   - **DNp02/DNp04/DNp11 (6)** escape-manoeuvre (wing) neurons
   - their 330 strongest partners, including ascending (proprioceptive) and
     sensory (wind) neurons
+- **A second connectome moves the legs.** A 1,045-neuron subgraph of the
+  **MaleCNS v1.0** ventral nerve cord — 17,224 measured connections, 708,689
+  contacts — runs alongside the brain at 1 kHz. Descending commands go in, six
+  muscle channels per leg come out, and the joint angles and foot loads they
+  produce go back in as proprioception. There are no gait oscillators: the
+  walking has to fall out of the graph.
 - **Escape is not scripted.** Your cursor's approach becomes looming input to
   the real LC4/LPLC2 cells; the fly takes off only when the Giant Fiber actually
   spikes through its real synapses — ~1,200 synapses of feedforward inhibition
@@ -84,9 +90,24 @@ fly here runs on exactly the same real neurons. See
   escape in ~4 ms, just like the real animal. `--simtest` measures that latency
   on your machine and it comes out at 4 ms.
 
-The body itself is procedural (FlyWire is a brain connectome — no body geometry
-exists), with a tripod gait, visible wing-beat, altitude-scaled flight, grooming
-and sleep postures.
+The body itself is procedural (neither connectome carries body geometry), with
+articulated legs, a visible wing-beat, altitude-scaled flight, grooming and
+sleep postures. A stag beetle is available as a second body; it is a different
+set of shapes driven by exactly the same neurons.
+
+**Where the measurement stops.** The MaleCNS graph measures contacts, not
+effective physiological weights. Acetylcholine is assigned a positive sign,
+GABA and glutamate negative ones; those are receptor-effect assumptions. The
+annotation tables do not identify the modelled angle or velocity tuning, the
+preferred direction or the particular joint any of the selected proprioceptors
+senses, so every mapping of body angle, speed and load onto those cells is a
+declared model assumption. A muscle label likewise supplies no force, no moment
+arm and no activation kinetics. Many incoming connections are omitted — the
+retained input coverage per motor channel is in `data/locomotor_report.json`.
+A successful anatomical path check validates the extraction; it does not
+validate biological motion.
+[`data/LOCOMOTOR_PROVENANCE.md`](data/LOCOMOTOR_PROVENANCE.md) states the whole
+boundary, and nothing here may claim more than that file does.
 
 ## Where the neurons come from
 
@@ -140,6 +161,27 @@ driving backward walking (*Bidaye et al., Science* 2014), and DNa01/DNa02
 steering (*Rayshubskiy et al.*). The LIF dynamics on top of that graph are a
 model, not a measurement — see [What's modelled vs. measured](#whats-modelled-vs-measured).
 
+### And where the nerve cord comes from
+
+The legs are moved by a different animal. `data/locomotor_circuit.json` is a
+bounded subgraph of the **MaleCNS v1.0** connectome — the male *Drosophila*
+central nervous system, released by **FlyEM at HHMI Janelia** with the
+**University of Cambridge**, the **MRC Laboratory of Molecular Biology** and
+**Google Research**. It supplements the female FlyWire brain; it does not
+replace that specimen and this is not a whole-CNS simulation.
+
+Every retained edge is a published body-pair connection with at least five
+contacts. Leg and side assignments come from explicit annotations — soma side,
+subclass, entry nerve — never from graph position or body-ID parity. Motor
+channels come from literal named muscle annotations, and anatomically unnamed
+motor types get no guessed channel. The two specimens are joined by a modelled
+population-rate interface, cell type for cell type: **there is no cross-specimen
+synapse in either dataset**, and none is invented.
+
+The MaleCNS files are **CC BY 4.0**, a different licence from the FlyWire files
+beside them. `etl_malecns.py` rebuilds them from the public tables and embeds
+every source URL, byte size and SHA-256 in the output.
+
 ## Installation
 
 Requirements: Linux, Python 3.11+, a compositor with `wlr-layer-shell`
@@ -154,7 +196,7 @@ cd desktop-fly-linux
 makepkg -si
 ```
 
-`makepkg` runs both test suites as its check step, installs the connectome to
+`makepkg` runs all three test suites as its check step, installs the connectome to
 `/usr/share/desktop-fly/data`, and gives you `pacman -R desktop-fly` to undo it.
 The dependencies it pulls in are `python-numpy python-opengl python-gobject
 gtk3 gtk-layer-shell`, plus the optional `libayatana-appindicator` (tray) and
@@ -209,17 +251,23 @@ The tray menu and `desktop-fly ctl` expose the same commands.
 |---|---|---|
 | Pause / Resume | `pause` · `resume` | freeze the world |
 | Show / Hide Brain | `brain` | toggle the live brain window |
+| Fullscreen Brain | `brain-fullscreen` | fill the screen with the brain |
+| Hide Brain Hint | `brain-hint` | dismiss the controls hint in its corner |
 | Escape Test (loom) | `escape` | inject a looming stimulus, watch the GF fire |
+| Body: Stag Beetle | `body` | swap the body; the behaviour carries straight over |
 | Move to Next Output | `next-output` | hop the fly across monitors |
 | Add Fly · Remove Fly | `add-fly` · `remove-fly` | extra flies (only fly #1 carries the brain) |
 | Scare Flies | `scare` | startle everyone |
 | Quit | `quit` | |
 
-**The brain window is interactive**: hovering pauses the rotation; clicking a
-region "optogenetically" stimulates the ~60 nearest circuit neurons for 400 ms.
-The fly's reaction is whatever the real network does downstream — click the
-Giant Fiber and it escapes, click DNg11 and it grooms, click one side's
-DNa01/02 and it turns.
+**The brain window is explorable**: drag to orbit, scroll to zoom,
+double-click for fullscreen, and hovering pauses the ambient rotation so a
+region can be aimed at instead of chased. Clicking a region
+"optogenetically" stimulates the ~60 nearest circuit neurons for 400 ms. The
+fly's reaction is whatever the real network does downstream — click the Giant
+Fiber and it escapes, click DNg11 and it grooms, click one side's DNa01/02 and
+it turns. A short click stimulates and a long one orbits, so aiming and
+spinning never fight each other.
 
 ## How real neurons drive the body
 
@@ -233,10 +281,19 @@ DNa01/02 and it turns.
 | nervous darting | LC4/LPLC2 population rate |
 | wing-beat effort, threat wing-raise | DNp02/04/11 rate |
 | spontaneous takeoff | whole-population arousal |
+| every individual leg joint | MaleCNS motor neurons, per muscle channel |
 
-The loop also closes body→brain: the gait rhythm feeds the circuit's real
-ascending (proprioceptive) neurons in phase with the legs, and fast cursor
-motion stimulates its sensory (wind) partners.
+Those descending rates are also what crosses into the nerve cord. Inside it,
+premotor interneurons drive motor neurons named for the muscles they innervate
+— tibia and trochanter flexors and extensors, coxal promotors, remotors and
+rotators — and the six activations per leg become joint torques.
+
+The loop closes body→brain twice over. Fast cursor motion stimulates the
+circuit's sensory (wind) partners, and the legs report back: joint excursion and
+speed to the chordotonal organs, hip angle to the hair plates, foot load to the
+campaniform sensilla. Without the nerve cord the fly falls back to a scripted
+tripod gait and a sinusoid into the ascending neurons, which is what it did
+before v1.1.0.
 
 ## Desktop ecology
 
@@ -244,7 +301,8 @@ motion stimulates its sensory (wind) partners.
   walks along them, rides a window you drag, and startles when one closes under
   its feet.
 - **Window looms**: a window appearing near the fly feeds the looming pathway;
-  the circuit decides whether to flee your dialogs.
+  the circuit decides whether to flee your dialogs. Drag a window out from under
+  the fly and the ground goes with it, so it takes off.
 - **Clicks are substrate taps**; clicking next to the fly startles it through
   the wind→GF pathway. **Typing is vibration** (when keys were pressed, never
   which).
@@ -282,15 +340,26 @@ Two honest gaps, neither of which is worked around:
 ## Diagnostics
 
 ```sh
-desktop-fly --probe          # which backends were chosen, and what each reads
-desktop-fly --simtest        # circuit invariants: GF silent at rest, 4 ms loom latency, …
-desktop-fly --behaviortest   # end-to-end checks: stimulate neurons -> body reacts
-desktop-fly --snapshot f.png # offscreen fly render
-desktop-fly --brainshot b.png # offscreen brain render
+desktop-fly --probe            # which backends were chosen, and what each reads
+desktop-fly --simtest          # circuit invariants: GF silent at rest, 4 ms loom latency, …
+desktop-fly --behaviortest     # end-to-end checks: stimulate neurons -> body reacts
+desktop-fly --locomotortest    # the nerve cord, the mechanics, and the loop between them
+desktop-fly --brainshot b.png  # offscreen brain render
+desktop-fly --snapshot f.png                     # three-quarter close-up of the body
+desktop-fly --snapshot f.png --top               # the overlay's own view, the one you see
+desktop-fly --snapshot f.png --top --walking     # a pose driven by live motor neurons
+desktop-fly --snapshot f.png --top --beetle --flying
 ```
 
-Both suites are upstream's, ported number for number, and they are the ground
-truth for any change to the simulation or the behaviour. They run headless.
+[`EVALUATION.md`](EVALUATION.md) records what those suites measure here beside
+the numbers upstream published for the same runs.
+
+All three suites are upstream's, ported number for number, and they are the
+ground truth for any change to the simulation or the behaviour. They run
+headless. `--locomotortest` is the one to run after touching anything shared by
+the nerve cord and the body; several of its checks are lesions, because the
+only way to show a movement travelled the path it claims to is to cut that path
+and watch the movement stop.
 
 ## Configuration
 
@@ -313,6 +382,20 @@ curl -O "$B/classification.csv.gz" -O "$B/coordinates.csv.gz" \
 cd - && python3 etl.py /tmp/flywire
 ```
 
+The nerve cord comes from a separate extraction, using upstream's unmodified
+`etl_malecns.py`. It needs numpy, pandas and pyarrow, and streams ~1.11 GB of
+public Feather tables:
+
+```sh
+python3 etl_malecns.py /tmp/fly-male-cns --download
+```
+
+It writes `data/locomotor_circuit.json` and `data/locomotor_report.json`, and
+asserts real descending→motor paths to every leg's antagonist channels before
+it will do so. The raw tables stay outside the repository. Both outputs should
+come out byte-identical to the ones shipped here; their SHA-256 digests are in
+[`third_party/UPSTREAM.md`](third_party/UPSTREAM.md).
+
 ## What's modelled vs. measured
 
 Carried over from upstream, because it is still true here. The connectome gives
@@ -323,12 +406,22 @@ value) are standard modelling choices layered on the real graph. Everything
 downstream of the sensory neurons — who connects to whom, and how strongly — is
 FlyWire data.
 
+The same split holds for the nerve cord, and it is worth being blunter about
+because a fly with moving legs invites more belief than it has earned. The
+anatomy, the contact counts, the muscle names and the cell types are measured.
+The neural dynamics, the sensory tuning, the muscle activation, the body
+mechanics and the rate transfer between two different specimens are not. The
+per-motor-channel input coverage of this extraction runs between 21% and 45%,
+so the simulation is watching a fraction of what actually drives each muscle.
+It walks; that is a property of this model, not a replay of the animal.
+
 ## Third-party code and licences
 
 | what | where | licence |
 |---|---|---|
-| **DesktopFly** by Denis Shiryaev — the original project. `etl.py` and `assets/` are vendored byte-identical; `Sim.swift`, `main.swift`, `FlyModel.swift`, `BrainView.swift` and `Environment.swift` are transliterated into `desktopfly/` with every constant unchanged | [DenisSergeevitch/desktop-fly](https://github.com/DenisSergeevitch/desktop-fly) | **MIT** — retained in [`LICENSE`](LICENSE) |
+| **DesktopFly** by Denis Shiryaev — the original project. `etl.py`, `etl_malecns.py` and `assets/` are vendored byte-identical; `Sim.swift`, `main.swift`, `FlyModel.swift`, `BeetleModel.swift`, `Locomotor.swift`, `LegDynamics.swift`, `LocomotorTests.swift`, `BrainView.swift` and `Environment.swift` are transliterated into `desktopfly/` with every constant unchanged | [DenisSergeevitch/desktop-fly](https://github.com/DenisSergeevitch/desktop-fly) | **MIT** — retained in [`LICENSE`](LICENSE) |
 | **FlyWire FAFB v783 connectome** — the neuron reconstructions, synapse counts, neurotransmitter predictions, cell types and soma coordinates that `data/brain_points.json` and `data/circuit.json` are derived from. Not upstream's work and not this fork's; see [Where the neurons come from](#where-the-neurons-come-from) | [FlyWire Codex](https://codex.flywire.ai) | **CC BY-NC 4.0** — see [`data/DATA_LICENSE.md`](data/DATA_LICENSE.md) |
+| **MaleCNS v1.0 connectome** — the male ventral-nerve-cord anatomy, contact counts, muscle and nerve annotations and transmitter predictions that `data/locomotor_circuit.json` is derived from. FlyEM at HHMI Janelia, the University of Cambridge, the MRC Laboratory of Molecular Biology and Google Research; see [And where the nerve cord comes from](#and-where-the-nerve-cord-comes-from) | [MaleCNS download](https://male-cns.janelia.org/download/) | **CC BY 4.0** — see [`data/LOCOMOTOR_PROVENANCE.md`](data/LOCOMOTOR_PROVENANCE.md) |
 | **NumPy** — the 1 kHz network | runtime dependency | BSD-3-Clause |
 | **PyOpenGL** — both renderers | runtime dependency | BSD-style (PyOpenGL licence) |
 | **PyGObject** and **GTK 3** — windows, GL contexts, the main loop | runtime dependency | LGPL-2.1-or-later |
@@ -337,8 +430,30 @@ FlyWire data.
 | **python-xlib** — the X11 backend | optional runtime dependency | LGPL-2.1-or-later |
 
 This fork's own code is MIT, under the same copyright notice as upstream's plus
-its own. **The `data/` files are CC BY-NC 4.0, so the bundle as distributed is
-non-commercial** even though the code is not.
+its own. `data/` now holds two sources under two licences: **the FlyWire files
+are CC BY-NC 4.0, so the bundle as distributed is non-commercial** even though
+the code is not, and the MaleCNS files are CC BY 4.0. Keep the split intact.
+
+## Changelog
+
+### 0.2.0 — parity with upstream v1.1.0
+
+- **MaleCNS locomotor circuit.** 1,045 real nerve-cord neurons drive the
+  primary fly's articulated legs through joint and contact feedback, on one
+  fixed 120 Hz clock shared by sensing, neurons, mechanics and the body.
+- **A stag-beetle body**, swappable from the tray and from `ctl body`, with the
+  behaviour layer untouched.
+- **The brain window is explorable**: orbit, zoom, fullscreen, controls hint.
+- **Frame-rate independence.** Fourteen filters and the cursor's own velocity
+  measurement were tuned at 60 Hz and drifted everywhere else; the loom that
+  reaches the giant fiber no longer depends on your refresh rate.
+- **Measured walking kinematics**: turns are body saccades of 5–25° spent over
+  ~90 ms, and swing duration is constant across speed instead of a fixed
+  fraction of the step cycle.
+- **Smooth transitions**: eased turns, blended leg poses, a damped landing
+  flare and gated wing opening, plus a fix for the fly teleporting after a
+  window it stood on was dragged sideways.
+- New `--locomotortest` suite (18 checks); `--behaviortest` grows to 23.
 
 ## Citation
 
