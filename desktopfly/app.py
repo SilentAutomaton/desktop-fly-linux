@@ -190,8 +190,8 @@ class Coordinator:
             self._inject_tap()
 
     def _poll_ambient(self) -> None:
-        now = datetime.now()
-        hour = now.hour + now.minute / 60
+        wall = datetime.now()
+        hour = wall.hour + wall.minute / 60
         # Upstream asks macOS for the seconds since the user last touched
         # anything. Here that is reconstructed from the senses that exist: the
         # cursor moving, the window list changing, and - when permitted - a real

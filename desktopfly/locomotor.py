@@ -145,8 +145,14 @@ class LocomotorSim:
         self._sensory = np.asarray(sensory, np.int64)
         kinds = [circuit.neurons[i].sensory_kind for i in sensory]
         self._sensory_leg = self._legs[self._sensory]
-        self._sensory_load = np.asarray([kind in LOAD_KINDS for kind in kinds])
-        self._sensory_hair = np.asarray([kind == HAIR_KIND for kind in kinds])
+        # The dtype is explicit because an empty sensory population would make
+        # these float64 arrays, and the `|` below is a bitwise op.
+        self._sensory_load: npt.NDArray[np.bool_] = np.asarray(
+            [kind in LOAD_KINDS for kind in kinds], np.bool_
+        )
+        self._sensory_hair: npt.NDArray[np.bool_] = np.asarray(
+            [kind == HAIR_KIND for kind in kinds], np.bool_
+        )
         self._sensory_joint = ~(self._sensory_load | self._sensory_hair)
 
     # -- public API ---------------------------------------------------------

@@ -22,10 +22,10 @@ from desktopfly.app import Coordinator  # noqa: E402
 from desktopfly.config import Config  # noqa: E402
 from desktopfly.dataset import load_brain_data  # noqa: E402
 from desktopfly.geometry import BodyForm  # noqa: E402
-from desktopfly.platform.base import Backends  # noqa: E402
+from desktopfly.platform.base import Backends, OutputInfo  # noqa: E402
 from desktopfly.platform.detect import detect  # noqa: E402
 from desktopfly.platform.gtk_brain_window import BrainWindow  # noqa: E402
-from desktopfly.platform.gtk_overlay import GtkOverlay  # noqa: E402
+from desktopfly.platform.gtk_overlay import APPLICATION_ID, GtkOverlay  # noqa: E402
 from desktopfly.render.gl import Renderer  # noqa: E402
 from desktopfly.sim import SpikeBus  # noqa: E402
 from desktopfly.tray import Tray  # noqa: E402
@@ -43,6 +43,12 @@ def control_socket_path() -> Path:
 
 class Application:
     def __init__(self, config: Config, backends: Backends | None = None) -> None:
+        # GTK 3 takes the Wayland app_id from the program name, and Gtk.Window
+        # .set_wmclass only reaches X11. Without this the brain toplevel comes
+        # up as "__main__.py", which no window rule matches and which the
+        # backends' own-surface filters do not recognise as ours.
+        GLib.set_prgname(APPLICATION_ID)
+
         self.config = config
         self.backends = backends or detect(taps_enabled=config.senses.input_devices != "off")
         self.data = load_brain_data()
@@ -92,7 +98,7 @@ class Application:
 
     # -- output selection ---------------------------------------------------
 
-    def _pick_output(self):  # type: ignore[no-untyped-def]
+    def _pick_output(self) -> OutputInfo | None:
         outputs = self.backends.outputs.outputs()
         wanted = self.config.display.output
         if wanted:

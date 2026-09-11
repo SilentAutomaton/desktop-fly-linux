@@ -530,9 +530,15 @@ input; the compositor decides whether it tiles or floats, and the README ships t
 for people who want it floating:
 
 ```
-windowrulev2 = float, class:^(desktop-fly-brain)$
-windowrulev2 = size 480 400, class:^(desktop-fly-brain)$
+windowrule = match:class ^(desktop-fly)$, float on
+windowrule = match:class ^(desktop-fly)$, size 480 400
 ```
+
+The class is the process name, not the window's own: GTK 3 takes a Wayland `app_id` from
+`g_get_prgname()`, and `Gtk.Window.set_wmclass` reaches X11 only. `runtime.py` therefore sets
+the program name to `desktop-fly` before any window exists, which is also what lets the
+Hyprland and sway backends filter our own surfaces out of the window terrain. On X11 the
+window additionally carries the more specific `desktop-fly-brain` in `WM_CLASS`.
 
 Contents, ported from `BrainView.swift`:
 
@@ -613,7 +619,7 @@ an agent picking the work up has the whole contract in one place.
   operating system is a new file plus one line in `detect.py`.
 - No abstraction with a single implementation *except* in `platform/`, where the second
   implementation is the entire point.
-- Type hints everywhere. `mypy --strict` clean on the core modules.
+- Type hints everywhere. `mypy --strict` clean across the package, not just the core modules.
 - `ruff` clean, 100-column lines.
 
 ### 5.4 Constants and configuration

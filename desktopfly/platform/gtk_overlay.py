@@ -37,7 +37,7 @@ try:
 
     LAYER_SHELL_AVAILABLE = True
 except (ImportError, ValueError):
-    GtkLayerShell = None  # type: ignore[assignment]
+    GtkLayerShell = None
     LAYER_SHELL_AVAILABLE = False
 
 

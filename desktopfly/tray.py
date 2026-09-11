@@ -12,6 +12,7 @@ and keeps running.
 from __future__ import annotations
 
 from collections.abc import Callable
+from types import ModuleType
 
 import gi
 
@@ -23,7 +24,7 @@ INDICATOR_ID = "desktop-fly"
 INDICATOR_ICON = "applications-science"
 
 
-def _load_indicator() -> object | None:
+def _load_indicator() -> ModuleType | None:
     """Ayatana is the maintained fork; the old name is still around on some systems."""
     for namespace in ("AyatanaAppIndicator3", "AppIndicator3"):
         try:

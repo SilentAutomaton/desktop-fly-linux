@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "desktop-fly-linux"
-version = "0.2.0"
+version = "0.2.1"
 description = "A connectome-driven 3D fruit fly on the Linux desktop (Wayland/X11 fork of DesktopFly)"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 keywords = ["desktop-pet", "connectome", "flywire", "wayland", "hyprland", "layer-shell"]
 classifiers = [
@@ -39,7 +39,7 @@ packages = ["desktopfly", "desktopfly.render", "desktopfly.platform", "desktopfl
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 # The two ETL scripts are vendored upstream byte-for-byte. Linting a file
 # nobody is allowed to edit only produces noise.
 extend-exclude = ["etl.py", "etl_malecns.py"]
@@ -62,7 +62,9 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RET", "TID"]
 "OpenGL".msg = "core modules must stay headless; GL belongs in desktopfly/render"
 
 [tool.mypy]
-python_version = "3.11"
+# 3.12 is the floor numpy's own stubs need: they are written with PEP 695
+# type statements, which mypy will not parse for an older target.
+python_version = "3.12"
 strict = true
 files = ["desktopfly"]
 

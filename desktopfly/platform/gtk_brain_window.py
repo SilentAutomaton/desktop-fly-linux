@@ -190,7 +190,7 @@ class BrainWindow:
         self.renderer.draw()
         return True
 
-    def _handle_tick(self, widget: Gtk.Widget, clock: object) -> bool:
+    def _handle_tick(self, widget: Gtk.Widget, clock: Gdk.FrameClock) -> bool:
         now = clock.get_frame_time()
         dt = 0.0 if self._last_frame_us == 0 else (now - self._last_frame_us) / 1_000_000
         self._last_frame_us = now

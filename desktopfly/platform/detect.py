@@ -16,6 +16,7 @@ from desktopfly.platform.base import (
     NullTapSource,
     NullThermalSource,
     NullWindowSource,
+    OutputInfo,
     OutputSource,
     PointerSource,
     TapSource,
@@ -30,7 +31,7 @@ class _NoOutputs(OutputSource):
     def __init__(self, reason: str) -> None:
         self.reason = reason
 
-    def outputs(self) -> list:  # type: ignore[type-arg]
+    def outputs(self) -> list[OutputInfo]:
         return []
 
     def current(self) -> None:
@@ -51,15 +52,15 @@ def detect(taps_enabled: bool = True) -> Backends:
 
     if hypr_socket is not None:
         name = "hyprland (wayland)"
-        ipc = hyprland.HyprlandIPC(hypr_socket)
-        outputs = hyprland.HyprlandOutputs(ipc)
-        windows = hyprland.HyprlandWindows(ipc)
-        pointer = hyprland.HyprlandPointer(ipc)
+        hypr_ipc = hyprland.HyprlandIPC(hypr_socket)
+        outputs = hyprland.HyprlandOutputs(hypr_ipc)
+        windows = hyprland.HyprlandWindows(hypr_ipc)
+        pointer = hyprland.HyprlandPointer(hypr_ipc)
     elif sway_socket is not None:
         name = "sway/i3"
-        ipc = sway.SwayIPC(sway_socket)
-        outputs = sway.SwayOutputs(ipc)
-        windows = sway.SwayWindows(ipc)
+        sway_ipc = sway.SwayIPC(sway_socket)
+        outputs = sway.SwayOutputs(sway_ipc)
+        windows = sway.SwayWindows(sway_ipc)
         # No Wayland protocol exposes the pointer position and sway has no IPC
         # command for it, so the fly runs blind here. See DESIGN.md section 4.3.
         pointer = NullPointerSource("sway exposes no cursor position")

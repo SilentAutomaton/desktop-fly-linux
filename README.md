@@ -184,7 +184,7 @@ every source URL, byte size and SHA-256 in the output.
 
 ## Installation
 
-Requirements: Linux, Python 3.11+, a compositor with `wlr-layer-shell`
+Requirements: Linux, Python 3.12+, a compositor with `wlr-layer-shell`
 (Hyprland, sway, river, Wayfire, KDE) or any X11 window manager.
 
 On Arch, build and install a real package — every dependency is in the official
@@ -198,6 +198,9 @@ makepkg -si
 
 `makepkg` runs all three test suites as its check step, installs the connectome to
 `/usr/share/desktop-fly/data`, and gives you `pacman -R desktop-fly` to undo it.
+There is no `source=()` array, so it builds in the checkout itself and leaves
+`dist/`, `build/`, `pkg/` and `src/` behind; `makepkg -sicC` clears them
+afterwards.
 The dependencies it pulls in are `python-numpy python-opengl python-gobject
 gtk3 gtk-layer-shell`, plus the optional `libayatana-appindicator` (tray) and
 `python-xlib` (X11 backend).
@@ -231,9 +234,16 @@ The brain window is a normal window, so a tiling compositor will tile it. To
 have it float:
 
 ```
-windowrulev2 = float, class:^(desktop-fly-brain)$
-windowrulev2 = size 480 400, class:^(desktop-fly-brain)$
+windowrule = match:class ^(desktop-fly)$, float on
+windowrule = match:class ^(desktop-fly)$, size 480 400
 ```
+
+That is the rule syntax of Hyprland 0.53 and later. Before it, the same two
+rules were written `windowrulev2 = float, class:^(desktop-fly-brain)$`. The
+class is `desktop-fly` and not `desktop-fly-brain` because the fly's own
+overlay is a layer surface with no class of its own, so the brain window is
+the only toplevel this matches. On X11 the window also answers to
+`desktop-fly-brain`.
 
 Any menu item can be bound to a key, which is usually nicer than reaching for
 the tray:
@@ -435,6 +445,21 @@ are CC BY-NC 4.0, so the bundle as distributed is non-commercial** even though
 the code is not, and the MaleCNS files are CC BY 4.0. Keep the split intact.
 
 ## Changelog
+
+### 0.2.1 — packaging and window identity
+
+- **`makepkg` reaches `package()` again.** The build ran inside the checkout
+  and never cleaned `dist/`, so a rebuild left two wheels there and the
+  install step died on the duplicate files. It now cleans first and installs
+  the wheel by name.
+- **The brain window has a window class on Wayland.** It came up as
+  `__main__.py`, which no window rule matched and which the compositor
+  backends did not recognise as the fly's own surface — so the fly could land
+  on and be startled by its own brain window.
+- **The Hyprland rules in this README are the current syntax.**
+- **`mypy --strict` runs again**, and is clean across the package. It had been
+  pinned to a Python version numpy's own type stubs no longer parse at, so it
+  aborted before checking anything. The floor is now Python 3.12.
 
 ### 0.2.0 — parity with upstream v1.1.0
 

@@ -284,7 +284,7 @@ class BrainRenderer:
 
         def unproject(depth: float) -> npt.NDArray[np.float64]:
             point = inverse @ np.array([ndc_x, ndc_y, depth, 1.0])
-            return point[:3] / point[3]
+            return np.asarray(point[:3] / point[3], np.float64)
 
         near = unproject(-1.0)
         far = unproject(1.0)

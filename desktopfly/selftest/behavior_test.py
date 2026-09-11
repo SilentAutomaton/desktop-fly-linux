@@ -13,8 +13,6 @@ import random
 import sys
 from collections.abc import Callable
 
-import numpy.typing as npt
-
 from desktopfly import constants as k
 from desktopfly.behavior import Fly, State, lag
 from desktopfly.dataset import BrainData, load_brain_data
@@ -93,9 +91,6 @@ def run(seed: int | None = None) -> int:
         print("no data/ — run etl.py first", file=sys.stderr)
         return 1
     report = _Report()
-
-    def group(name: str) -> Callable[[LIFSim], npt.NDArray]:
-        return lambda sim: getattr(sim.groups, name)
 
     _scenario(
         report,
@@ -220,8 +215,9 @@ def run(seed: int | None = None) -> int:
         signals = BrainSignals(sleep=True)
         for _ in range(60):
             fly.update(DT, BOUNDS, None, signals)
-        if fly.state is not State.SLEEPING:
-            return False, f"no sleep: {fly.state.value}"
+        slept = fly.state
+        if slept is not State.SLEEPING:
+            return False, f"no sleep: {slept.value}"
         signals.sleep = False
         fly.update(DT, BOUNDS, None, signals)
         return fly.state is State.GROOMING, f"woke to {fly.state.value}"
